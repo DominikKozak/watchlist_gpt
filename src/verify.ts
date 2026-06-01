@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { createDb } from "./db/client.js";
 import { initializeDatabase } from "./db/schema.js";
+import { createInvestWatchlistMcpServer, expectedToolNames } from "./mcp/createServer.js";
 import { MockPriceProvider } from "./prices/mockPriceProvider.js";
 import { createPriceProvider } from "./prices/providerFactory.js";
 import type { PriceProvider } from "./prices/priceProvider.js";
@@ -36,6 +37,15 @@ const db = createDb(dbPath);
 initializeDatabase(db);
 process.env.PRICE_PROVIDER = "mock";
 const tools = new WatchlistTools(db, createPriceProvider());
+const server = createInvestWatchlistMcpServer({ tools, priceProviderMode: "mock" });
+const registeredTools = server as unknown as { _registeredTools?: Map<string, unknown> | Record<string, unknown> };
+const toolRegistry = registeredTools._registeredTools;
+const registeredToolNames =
+  toolRegistry instanceof Map ? [...toolRegistry.keys()].sort() : Object.keys(toolRegistry ?? {}).sort();
+assert(
+  JSON.stringify(registeredToolNames) === JSON.stringify([...expectedToolNames].sort()),
+  `Expected registered MCP tools to match: ${expectedToolNames.join(", ")}`,
+);
 
 tools.addAsset({
   ticker: "MSFT",

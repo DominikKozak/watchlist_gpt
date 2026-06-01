@@ -8,8 +8,12 @@
     "build": "tsc -p tsconfig.json",
     "db:init": "tsx src/db/schema.ts",
     "seed": "tsx src/seed.ts",
-    "start": "node dist/server.js",
-    "dev": "tsx src/server.ts",
+    "start": "npm run start:stdio",
+    "start:stdio": "node dist/server.js",
+    "start:http": "node dist/httpServer.js",
+    "dev": "npm run dev:stdio",
+    "dev:stdio": "tsx src/server.ts",
+    "dev:http": "tsx src/httpServer.ts",
     "verify": "tsx src/verify.ts"
   },
   "dependencies": {

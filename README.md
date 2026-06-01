@@ -72,20 +72,54 @@ Seeded assets:
 
 ## Run Local MCP Server
 
-For development:
+### Local stdio
+
+Use stdio for local, process-spawned MCP clients:
 
 ```bash
-npm run dev
+npm run dev:stdio
 ```
 
 For compiled JavaScript:
 
 ```bash
 npm run build
-npm start
+npm run start:stdio
 ```
 
-The server uses MCP stdio transport, which is the expected local connector style for MCP clients. It registers:
+`npm run dev` and `npm start` are kept as stdio aliases for convenience.
+
+### Streamable HTTP
+
+This project also includes a stateless Streamable HTTP MCP entrypoint using the current MCP SDK's `StreamableHTTPServerTransport`.
+
+For development:
+
+```bash
+npm run dev:http
+```
+
+For compiled JavaScript:
+
+```bash
+npm run build
+npm run start:http
+```
+
+By default it listens on:
+
+```text
+http://127.0.0.1:3000/mcp
+```
+
+Configure the HTTP bind with:
+
+```env
+HTTP_HOST=127.0.0.1
+HTTP_PORT=3000
+```
+
+Both transports register the same MCP tools:
 
 - `list_watchlist`
 - `get_asset`
@@ -111,6 +145,8 @@ npm run verify
 
 The verification script creates a temporary SQLite database, seeds assets, lists the watchlist, adds and updates a test asset, adds a note, refreshes mock prices, exports Markdown and CSV, deletes the test asset, checks LEAPS/review queries, and verifies `mock` plus `hybrid` provider routing for BTC.
 
+Both stdio and HTTP entrypoints use the same shared MCP server registration in `src/mcp/createServer.ts`, so all tools stay consistent across transports.
+
 ## Environment
 
 ```env
@@ -118,6 +154,8 @@ DATABASE_PATH=./data/watchlist.sqlite
 PRICE_PROVIDER=mock
 COINGECKO_API_KEY=
 STOCK_API_KEY=
+HTTP_HOST=127.0.0.1
+HTTP_PORT=3000
 ```
 
 `PRICE_PROVIDER=mock` is the MVP default. No API keys are hardcoded. Prices may be delayed, estimated, or mock-only depending on the configured provider.
@@ -140,16 +178,36 @@ Supported `PRICE_PROVIDER` values:
 
 ## Connect To ChatGPT Later
 
-For a private ChatGPT connector, the core requirement is an MCP server with clearly described tools. This MVP provides the local stdio MCP server.
+For a private ChatGPT connector, the core requirement is an MCP server with clearly described tools over a transport supported by the connector environment. This project now provides:
+
+- Local stdio MCP entrypoint: `src/server.ts`
+- Hosted/stateless Streamable HTTP MCP entrypoint: `src/httpServer.ts`
+- Shared tool registration: `src/mcp/createServer.ts`
 
 Next connection steps depend on the current ChatGPT Apps SDK/private connector deployment flow:
 
-1. Build and run this MCP server locally.
-2. Expose it through the private connector configuration supported by your ChatGPT workspace.
-3. If the connector requires HTTPS rather than stdio, deploy a small hosted MCP transport wrapper and point it at the same `WatchlistTools` implementation.
-4. Add an Apps SDK UI resource for a compact watchlist table and detail view.
+1. Build the project with `npm run build`.
+2. Run locally with `npm run start:http` and confirm the endpoint is available at `/mcp`.
+3. Deploy the app to a private HTTPS host. ChatGPT connector flows generally require HTTPS, not a plain local HTTP URL.
+4. Set production env vars: `DATABASE_PATH`, `PRICE_PROVIDER`, optional API keys, `HTTP_HOST`, and `HTTP_PORT`.
+5. Point the private connector configuration at the hosted `/mcp` endpoint.
+6. Add auth before exposing beyond a private trusted environment. The current HTTP MVP is transport-ready but does not implement OAuth or user auth.
+7. Add an Apps SDK UI resource for a compact watchlist table and detail view.
 
 The current MVP intentionally returns structured tool data cleanly enough for ChatGPT to render a table without a custom UI component.
+
+Implemented for hosted connector prep:
+
+- Stateless Streamable HTTP MCP transport at `POST /mcp`.
+- Shared tool registration for stdio and HTTP.
+- Environment-based price provider selection.
+
+TODO before broader deployment:
+
+- HTTPS hosting.
+- Authentication suitable for your private connector setup.
+- Optional Apps SDK UI component.
+- Real stock/ETF price provider.
 
 ## UI TODO
 
