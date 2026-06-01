@@ -4,7 +4,7 @@ import dotenv from "dotenv";
 import { z } from "zod";
 import { createDb } from "./db/client.js";
 import { initializeDatabase } from "./db/schema.js";
-import { MockPriceProvider } from "./prices/mockPriceProvider.js";
+import { createPriceProvider, getPriceProviderMode } from "./prices/providerFactory.js";
 import { WatchlistTools } from "./tools/watchlistTools.js";
 import type { AddAssetInput, AssetIdentifier, ListWatchlistInput, UpdateAssetFields } from "./types.js";
 
@@ -12,7 +12,8 @@ dotenv.config();
 
 const db = createDb();
 initializeDatabase(db);
-const tools = new WatchlistTools(db, new MockPriceProvider());
+const priceProviderMode = getPriceProviderMode();
+const tools = new WatchlistTools(db, createPriceProvider({ mode: priceProviderMode }));
 
 const server = new McpServer({
   name: "Invest Watchlist",
@@ -118,9 +119,9 @@ server.registerTool(
 server.registerTool(
   "refresh_prices",
   {
-    title: "Refresh mock watchlist prices",
+    title: "Refresh watchlist prices",
     description:
-      "Low-risk write tool. Refresh current prices with the MVP mock price provider, store price history, and continue if one ticker fails.",
+      `Low-risk write tool. Refresh current prices with PRICE_PROVIDER=${priceProviderMode}, store price history, and continue if one ticker fails.`,
     inputSchema: { ticker: z.string().optional(), category: z.string().optional() },
   },
   async (input) => asMcpResponse(await tools.refreshPrices(input as { ticker?: string; category?: string })),

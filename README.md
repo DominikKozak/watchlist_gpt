@@ -10,7 +10,7 @@ It is intentionally **not** a trading system. It never places trades, never conn
 
 - Local SQLite watchlist database.
 - MCP tools for listing, adding, updating, deleting, reviewing, and exporting assets.
-- Mock price provider for deterministic MVP price updates.
+- Runtime price provider selection with `PRICE_PROVIDER=mock`, `coingecko`, or `hybrid`.
 - Provider abstraction prepared for CoinGecko and Alpha Vantage/Finnhub-style stock APIs.
 - Seed data for MSFT, META, BTC, and SPCE.
 - Verification script covering the basic end-to-end flow.
@@ -109,7 +109,7 @@ Run:
 npm run verify
 ```
 
-The verification script creates a temporary SQLite database, seeds assets, lists the watchlist, adds and updates a test asset, adds a note, refreshes mock prices, exports Markdown and CSV, deletes the test asset, and checks LEAPS/review queries.
+The verification script creates a temporary SQLite database, seeds assets, lists the watchlist, adds and updates a test asset, adds a note, refreshes mock prices, exports Markdown and CSV, deletes the test asset, checks LEAPS/review queries, and verifies `mock` plus `hybrid` provider routing for BTC.
 
 ## Environment
 
@@ -122,13 +122,21 @@ STOCK_API_KEY=
 
 `PRICE_PROVIDER=mock` is the MVP default. No API keys are hardcoded. Prices may be delayed, estimated, or mock-only depending on the configured provider.
 
+Supported `PRICE_PROVIDER` values:
+
+- `mock`: use `MockPriceProvider` for every asset type.
+- `coingecko`: use `CoinGeckoProvider` for crypto only. Refreshing stocks, ETFs, options, CFDs, or note-only assets returns a clear per-ticker failure while the rest of the refresh continues.
+- `hybrid`: use `CoinGeckoProvider` for crypto and `MockPriceProvider` for stock, ETF, option, CFD, and note-only assets until a real stock provider is implemented.
+
+`refresh_prices` keeps partial-failure behavior in every mode. If one ticker fails, the tool reports it in `failed` and continues refreshing the remaining assets.
+
 ## Price Providers
 
-`MockPriceProvider` is used for the MVP and returns deterministic fake prices for seed assets plus reasonable test values for other tickers.
+`MockPriceProvider` returns deterministic fake prices for seed assets plus reasonable test values for other tickers.
 
 `CoinGeckoProvider` includes a simple crypto fetch path for mapped symbols such as BTC, using `COINGECKO_API_KEY` when present.
 
-`StockProvider` is a clean placeholder for an Alpha Vantage or Finnhub-style implementation using `STOCK_API_KEY`.
+`StockProvider` is a clean placeholder for an Alpha Vantage or Finnhub-style implementation using `STOCK_API_KEY`. Real stock and ETF prices are still not implemented; use `mock` or `hybrid` if you want stocks and ETFs to refresh in the local MVP.
 
 ## Connect To ChatGPT Later
 
