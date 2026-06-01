@@ -2,6 +2,8 @@
 
 Invest Watchlist is a private local MCP connector for personal investing analysis in ChatGPT. It manages a SQLite watchlist with assets, notes, review dates, mock prices, and export tools.
 
+Repository: `watchlist_gpt`.
+
 It is intentionally **not** a trading system. It never places trades, never connects to brokers, never stores broker login credentials, and never exposes buy/sell order tools. Outputs are for watchlist organization and research workflow only, not financial advice.
 
 ## Features
