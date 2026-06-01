@@ -5,7 +5,7 @@ import { WatchlistTools } from "./tools/watchlistTools.js";
 
 const db = createDb();
 initializeDatabase(db);
-const tools = new WatchlistTools(db, new MockPriceProvider());
+const tools = new WatchlistTools(db, new MockPriceProvider(), "mock");
 
 const seedAssets = [
   {
@@ -15,6 +15,11 @@ const seedAssets = [
     broker: "XTB",
     assetType: "stock" as const,
     conviction: "B+",
+    targetBuyPrice: 380,
+    reviewFrequencyDays: 30,
+    thesisScore: 8,
+    riskScore: 4,
+    lastDecision: "watch",
     thesis: "High-quality software and cloud compounder to watch for long-dated options analysis.",
   },
   {
@@ -24,6 +29,11 @@ const seedAssets = [
     broker: "XTB",
     assetType: "stock" as const,
     conviction: "A-",
+    targetBuyPrice: 440,
+    reviewFrequencyDays: 30,
+    thesisScore: 8,
+    riskScore: 5,
+    lastDecision: "watch",
     thesis: "Advertising cash flow plus AI optionality; review valuation and regulatory risk.",
   },
   {
@@ -32,6 +42,10 @@ const seedAssets = [
     category: "BTC / Crypto" as const,
     assetType: "crypto" as const,
     conviction: "A",
+    reviewFrequencyDays: 14,
+    thesisScore: 9,
+    riskScore: 7,
+    lastDecision: "hold thesis",
     thesis: "Long-term crypto watch item; monitor cycle risk, custody assumptions, and macro liquidity.",
   },
   {
@@ -40,6 +54,11 @@ const seedAssets = [
     category: "Speculative / WSB" as const,
     assetType: "stock" as const,
     conviction: "C",
+    reviewFrequencyDays: 14,
+    thesisScore: 3,
+    riskScore: 10,
+    lastDecision: "avoid",
+    decisionReason: "Speculative watch item only.",
     mainRisk: "high dilution / hype risk",
     thesis: "Speculative sentiment watch only; no execution functionality in this app.",
   },

@@ -2,6 +2,23 @@ import type Database from "better-sqlite3";
 import { pathToFileURL } from "node:url";
 import { createDb } from "./client.js";
 
+const assetMigrations = [
+  { name: "targetBuyPrice", definition: "REAL" },
+  { name: "targetSellPrice", definition: "REAL" },
+  { name: "reviewFrequencyDays", definition: "INTEGER" },
+  { name: "thesisScore", definition: "INTEGER" },
+  { name: "riskScore", definition: "INTEGER" },
+  { name: "lastDecision", definition: "TEXT" },
+  { name: "decisionReason", definition: "TEXT" },
+] as const;
+
+function ensureColumn(db: Database.Database, tableName: string, columnName: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === columnName)) {
+    db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`).run();
+  }
+}
+
 export function initializeDatabase(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS assets (
@@ -24,6 +41,13 @@ export function initializeDatabase(db: Database.Database): void {
       lastPriceUpdate TEXT,
       lastReviewDate TEXT,
       nextReviewDate TEXT,
+      targetBuyPrice REAL,
+      targetSellPrice REAL,
+      reviewFrequencyDays INTEGER,
+      thesisScore INTEGER,
+      riskScore INTEGER,
+      lastDecision TEXT,
+      decisionReason TEXT,
       createdAt TEXT NOT NULL,
       updatedAt TEXT NOT NULL
     );
@@ -52,6 +76,10 @@ export function initializeDatabase(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_notes_asset ON notes(assetId);
     CREATE INDEX IF NOT EXISTS idx_price_history_asset_timestamp ON price_history(assetId, timestamp DESC);
   `);
+
+  for (const migration of assetMigrations) {
+    ensureColumn(db, "assets", migration.name, migration.definition);
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

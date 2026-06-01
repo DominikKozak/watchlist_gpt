@@ -52,6 +52,13 @@ export interface Asset {
   lastPriceUpdate: string | null;
   lastReviewDate: string | null;
   nextReviewDate: string | null;
+  targetBuyPrice: number | null;
+  targetSellPrice: number | null;
+  reviewFrequencyDays: number | null;
+  thesisScore: number | null;
+  riskScore: number | null;
+  lastDecision: string | null;
+  decisionReason: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -105,6 +112,13 @@ export interface AddAssetInput {
   mainRisk?: string;
   buyZone?: string;
   currency?: string;
+  targetBuyPrice?: number;
+  targetSellPrice?: number;
+  reviewFrequencyDays?: number;
+  thesisScore?: number;
+  riskScore?: number;
+  lastDecision?: string;
+  decisionReason?: string;
 }
 
 export type UpdateAssetFields = Partial<Omit<AddAssetInput, "ticker">> & {
@@ -116,4 +130,11 @@ export type UpdateAssetFields = Partial<Omit<AddAssetInput, "ticker">> & {
   lastPriceUpdate?: string | null;
   lastReviewDate?: string | null;
   nextReviewDate?: string | null;
+  targetBuyPrice?: number | null;
+  targetSellPrice?: number | null;
+  reviewFrequencyDays?: number | null;
+  thesisScore?: number | null;
+  riskScore?: number | null;
+  lastDecision?: string | null;
+  decisionReason?: string | null;
 };

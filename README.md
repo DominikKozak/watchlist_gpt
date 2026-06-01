@@ -1,31 +1,32 @@
 # Invest Watchlist
 
-Invest Watchlist is a private local MCP connector for personal investing analysis in ChatGPT. It manages a SQLite watchlist with assets, notes, review dates, mock prices, and export tools.
+Invest Watchlist is a private MCP investment watchlist connector for ChatGPT. It manages a local SQLite database with assets, notes, review dates, analysis fields, price history, exports, and UI-ready structured tool output.
 
 Repository: `watchlist_gpt`.
 
 It is intentionally **not** a trading system. It never places trades, never connects to brokers, never stores broker login credentials, and never exposes buy/sell order tools. Outputs are for watchlist organization and research workflow only, not financial advice.
 
-## Features
+## Implemented
 
-- Local SQLite watchlist database.
-- MCP tools for listing, adding, updating, deleting, reviewing, and exporting assets.
-- Runtime price provider selection with `PRICE_PROVIDER=mock`, `coingecko`, or `hybrid`.
-- Provider abstraction prepared for CoinGecko and Alpha Vantage/Finnhub-style stock APIs.
-- Seed data for MSFT, META, BTC, and SPCE.
-- Verification script covering the basic end-to-end flow.
+- Local stdio MCP entrypoint in `src/server.ts`.
+- Hosted/stateless Streamable HTTP MCP endpoint at `POST /mcp` in `src/httpServer.ts`.
+- Shared MCP server and tool registration in `src/mcp/createServer.ts`.
+- Optional bearer-token protection for HTTP with `CONNECTOR_API_KEY`.
+- SQLite schema with safe backwards-compatible column migration.
+- Watchlist tools for listing, detail, add, update, delete, notes, review workflow, price refresh, buy-zone view, LEAPS view, Markdown export, and CSV export.
+- UI-ready list and detail responses for future Apps SDK rendering.
+- Runtime price provider routing with `mock`, `coingecko`, and `hybrid`.
+- Verification scripts for core tool behavior and HTTP bearer smoke testing.
 
-## Tool Shortcuts
+## Not Implemented
 
-The MCP tool descriptions are written so ChatGPT can map common phrases to tools:
-
-- `/watchlist` -> `list_watchlist`
-- `/watchlist review` -> `list_review_due`
-- `/watchlist leaps` -> `show_leaps_candidates`
-- `/watchlist buy zone` -> `show_buy_zone`
-- `add MSFT to LEAPS candidates` -> `add_asset`
-- `update BTC thesis` -> `update_asset`
-- `add note to META` -> `add_note`
+- Broker integrations.
+- Trade execution.
+- Buy/sell order tools.
+- Broker credential storage.
+- Real stock/ETF quote provider.
+- OAuth or production identity integration.
+- Full Apps SDK frontend component.
 
 ## Install
 
@@ -33,7 +34,7 @@ The MCP tool descriptions are written so ChatGPT can map common phrases to tools
 npm install
 ```
 
-Copy the environment template if you want to customize paths or future API keys:
+Copy the environment template:
 
 ```bash
 cp .env.example .env
@@ -45,17 +46,36 @@ On Windows PowerShell:
 Copy-Item .env.example .env
 ```
 
+## Environment
+
+```env
+DATABASE_PATH=./data/watchlist.sqlite
+PRICE_PROVIDER=mock
+COINGECKO_API_KEY=
+STOCK_API_KEY=
+STOCK_API_PROVIDER=
+HTTP_HOST=127.0.0.1
+HTTP_PORT=3000
+CONNECTOR_API_KEY=
+```
+
+`CONNECTOR_API_KEY` applies only to the HTTP entrypoint. If it is set, every `/mcp` request must include:
+
+```text
+Authorization: Bearer <CONNECTOR_API_KEY>
+```
+
+If `CONNECTOR_API_KEY` is empty, HTTP is allowed for local development and the server prints a warning at startup. Do not expose an unauthenticated HTTP server beyond a trusted local environment.
+
+No API keys or secrets are hardcoded.
+
 ## Initialize Database
 
 ```bash
 npm run db:init
 ```
 
-By default, the database is created at `./data/watchlist.sqlite`. Override it with:
-
-```env
-DATABASE_PATH=./data/watchlist.sqlite
-```
+By default, the database is created at `./data/watchlist.sqlite`. Existing databases are migrated by adding missing nullable analysis columns.
 
 ## Seed Data
 
@@ -68,11 +88,11 @@ Seeded assets:
 - MSFT, LEAPS candidates, XTB, stock, conviction B+
 - META, LEAPS candidates, XTB, stock, conviction A-
 - BTC, BTC / Crypto, crypto, conviction A
-- SPCE, Speculative / WSB, stock, conviction C, main risk: high dilution / hype risk
+- SPCE, Speculative / WSB, stock, conviction C
 
-## Run Local MCP Server
+The seed includes a few analysis fields such as review frequency, thesis score, risk score, target price, and last decision.
 
-### Local stdio
+## Run Local stdio MCP
 
 Use stdio for local, process-spawned MCP clients:
 
@@ -87,39 +107,57 @@ npm run build
 npm run start:stdio
 ```
 
-`npm run dev` and `npm start` are kept as stdio aliases for convenience.
+`npm run dev` and `npm start` are stdio aliases.
 
-### Streamable HTTP
+## Run HTTP MCP
 
-This project also includes a stateless Streamable HTTP MCP entrypoint using the current MCP SDK's `StreamableHTTPServerTransport`.
+The hosted entrypoint uses the MCP SDK `StreamableHTTPServerTransport` in stateless mode. Each HTTP request creates a request-scoped MCP server and SQLite handle, registers the same shared tools, handles the request, then closes its resources.
 
-For development:
+Development:
 
 ```bash
 npm run dev:http
 ```
 
-For compiled JavaScript:
+Compiled:
 
 ```bash
 npm run build
 npm run start:http
 ```
 
-By default it listens on:
+Default URL:
 
 ```text
 http://127.0.0.1:3000/mcp
 ```
 
-Configure the HTTP bind with:
+Configure with `HTTP_HOST` and `HTTP_PORT`.
 
-```env
-HTTP_HOST=127.0.0.1
-HTTP_PORT=3000
+### Manual HTTP Test
+
+Without `CONNECTOR_API_KEY`:
+
+```bash
+curl -i http://127.0.0.1:3000/mcp \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"0.0.0"}}}'
 ```
 
-Both transports register the same MCP tools:
+With `CONNECTOR_API_KEY`:
+
+```bash
+curl -i http://127.0.0.1:3000/mcp \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-private-key" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"0.0.0"}}}'
+```
+
+## Tools
+
+Both stdio and HTTP register the same tools:
 
 - `list_watchlist`
 - `get_asset`
@@ -135,97 +173,115 @@ Both transports register the same MCP tools:
 - `export_watchlist_markdown`
 - `export_watchlist_csv`
 
+The tool descriptions are written so ChatGPT can map phrases like:
+
+- `/watchlist`
+- `/watchlist review`
+- `/watchlist leaps`
+- `/watchlist buy zone`
+- `add MSFT to LEAPS candidates`
+- `update BTC thesis`
+- `refresh prices`
+
+## UI-Ready Output
+
+`list_watchlist` returns:
+
+- `assets`
+- `columns` metadata
+- `summary.total`
+- `summary.byCategory`
+- `summary.byStatus`
+- `generatedAt`
+- `priceProviderMode`
+- `warnings`
+
+`get_asset` returns:
+
+- `asset`
+- `notes`
+- `priceHistory`
+- `displaySections`
+- `generatedAt`
+- `priceProviderMode`
+- `warnings`
+
+This is enough for ChatGPT to present tables now and for a future Apps SDK component to consume later. There is no full React UI yet.
+
+## Analysis Fields
+
+Assets support these optional nullable analysis fields:
+
+- `targetBuyPrice`
+- `targetSellPrice`
+- `reviewFrequencyDays`
+- `thesisScore`
+- `riskScore`
+- `lastDecision`
+- `decisionReason`
+
+They are accepted by `add_asset` and `update_asset`, included in list/detail output, and exported in Markdown/CSV.
+
+## Review Workflow
+
+`mark_review_done` sets `lastReviewDate` to the current timestamp.
+
+If `nextReviewDate` is provided, that value is used. If it is not provided and the asset has `reviewFrequencyDays`, the tool sets `nextReviewDate` to today's UTC date plus that many days. If neither value is available, `nextReviewDate` stays null.
+
+If `reviewNote` is provided, the tool also adds a note prefixed with `Review:`.
+
+## Price Providers
+
+`PRICE_PROVIDER=mock` uses deterministic fake prices for every asset type. This is the MVP default.
+
+`PRICE_PROVIDER=coingecko` uses `CoinGeckoProvider` for mapped crypto assets such as BTC. Non-crypto assets return a clear per-ticker failure during refresh.
+
+`PRICE_PROVIDER=hybrid` routes crypto to CoinGecko and stocks, ETFs, options, CFDs, and note-only assets to mock prices.
+
+`COINGECKO_API_KEY` is optional and used only when present. Prices may be delayed, estimated, missing, or mock-only depending on provider mode.
+
+`StockProvider` remains a documented TODO for Alpha Vantage, Finnhub, or another provider using `STOCK_API_PROVIDER` and `STOCK_API_KEY`. Real stock/ETF quotes are not implemented yet.
+
+`refresh_prices` keeps partial-failure behavior. If one ticker fails, the tool reports it in `failed` and continues refreshing the rest.
+
 ## Verify
 
-Run:
+Core verification:
 
 ```bash
 npm run verify
 ```
 
-The verification script creates a temporary SQLite database, seeds assets, lists the watchlist, adds and updates a test asset, adds a note, refreshes mock prices, exports Markdown and CSV, deletes the test asset, checks LEAPS/review queries, and verifies `mock` plus `hybrid` provider routing for BTC.
+It validates database initialization, MCP tool registration, seed-like asset creation, add/update/delete, notes, review auto-date behavior, mock provider mode, hybrid provider routing, Markdown/CSV export, new fields, and rejection of unknown update fields.
 
-Both stdio and HTTP entrypoints use the same shared MCP server registration in `src/mcp/createServer.ts`, so all tools stay consistent across transports.
+HTTP smoke verification:
 
-## Environment
-
-```env
-DATABASE_PATH=./data/watchlist.sqlite
-PRICE_PROVIDER=mock
-COINGECKO_API_KEY=
-STOCK_API_KEY=
-HTTP_HOST=127.0.0.1
-HTTP_PORT=3000
+```bash
+npm run verify:http
 ```
 
-`PRICE_PROVIDER=mock` is the MVP default. No API keys are hardcoded. Prices may be delayed, estimated, or mock-only depending on the configured provider.
+It builds the project, starts the compiled HTTP server against a temporary database with `CONNECTOR_API_KEY`, verifies unauthorized requests return `401`, and verifies an authorized MCP initialize request succeeds.
 
-Supported `PRICE_PROVIDER` values:
+## Private ChatGPT Connector Path
 
-- `mock`: use `MockPriceProvider` for every asset type.
-- `coingecko`: use `CoinGeckoProvider` for crypto only. Refreshing stocks, ETFs, options, CFDs, or note-only assets returns a clear per-ticker failure while the rest of the refresh continues.
-- `hybrid`: use `CoinGeckoProvider` for crypto and `MockPriceProvider` for stock, ETF, option, CFD, and note-only assets until a real stock provider is implemented.
+For private hosted connector testing:
 
-`refresh_prices` keeps partial-failure behavior in every mode. If one ticker fails, the tool reports it in `failed` and continues refreshing the remaining assets.
+1. Run `npm install`.
+2. Run `npm run build`.
+3. Set production env vars, especially `DATABASE_PATH`, `PRICE_PROVIDER`, `HTTP_HOST`, `HTTP_PORT`, and `CONNECTOR_API_KEY`.
+4. Run `npm run start:http`.
+5. Put the app behind HTTPS. Private ChatGPT connector flows generally require HTTPS, not a plain local HTTP URL.
+6. Point the private connector configuration at `https://your-host.example/mcp`.
+7. Keep bearer auth for private testing, then replace or layer it with the auth required by your connector deployment model.
+8. Add an Apps SDK UI component later if you want a custom table/detail experience.
 
-## Price Providers
+## Future TODO
 
-`MockPriceProvider` returns deterministic fake prices for seed assets plus reasonable test values for other tickers.
-
-`CoinGeckoProvider` includes a simple crypto fetch path for mapped symbols such as BTC, using `COINGECKO_API_KEY` when present.
-
-`StockProvider` is a clean placeholder for an Alpha Vantage or Finnhub-style implementation using `STOCK_API_KEY`. Real stock and ETF prices are still not implemented; use `mock` or `hybrid` if you want stocks and ETFs to refresh in the local MVP.
-
-## Connect To ChatGPT Later
-
-For a private ChatGPT connector, the core requirement is an MCP server with clearly described tools over a transport supported by the connector environment. This project now provides:
-
-- Local stdio MCP entrypoint: `src/server.ts`
-- Hosted/stateless Streamable HTTP MCP entrypoint: `src/httpServer.ts`
-- Shared tool registration: `src/mcp/createServer.ts`
-
-Next connection steps depend on the current ChatGPT Apps SDK/private connector deployment flow:
-
-1. Build the project with `npm run build`.
-2. Run locally with `npm run start:http` and confirm the endpoint is available at `/mcp`.
-3. Deploy the app to a private HTTPS host. ChatGPT connector flows generally require HTTPS, not a plain local HTTP URL.
-4. Set production env vars: `DATABASE_PATH`, `PRICE_PROVIDER`, optional API keys, `HTTP_HOST`, and `HTTP_PORT`.
-5. Point the private connector configuration at the hosted `/mcp` endpoint.
-6. Add auth before exposing beyond a private trusted environment. The current HTTP MVP is transport-ready but does not implement OAuth or user auth.
-7. Add an Apps SDK UI resource for a compact watchlist table and detail view.
-
-The current MVP intentionally returns structured tool data cleanly enough for ChatGPT to render a table without a custom UI component.
-
-Implemented for hosted connector prep:
-
-- Stateless Streamable HTTP MCP transport at `POST /mcp`.
-- Shared tool registration for stdio and HTTP.
-- Environment-based price provider selection.
-
-TODO before broader deployment:
-
-- HTTPS hosting.
-- Authentication suitable for your private connector setup.
-- Optional Apps SDK UI component.
-- Real stock/ETF price provider.
-
-## UI TODO
-
-A future Apps SDK UI component should display:
-
-- Compact watchlist table.
-- Filters by category, status, and broker.
-- Asset detail panel with thesis, risks, buy zone, notes, and price history.
-
-This is not required for the local MCP MVP because all table-ready data is already returned as structured tool output.
-
-## Next Milestones
-
-1. Real CoinGecko BTC and crypto prices.
-2. Real stock/ETF prices through Alpha Vantage, Finnhub, or another provider.
-3. ChatGPT Apps SDK UI component.
-4. Hosted HTTPS deployment for private connector access.
-5. Optional LEAPS/options fields and calculator.
+- HTTPS hosting configuration.
+- Production-grade auth/OAuth for the private connector flow.
+- Apps SDK UI resource for compact table and detail views.
+- Real stock/ETF quote provider behind `STOCK_API_PROVIDER` and `STOCK_API_KEY`.
+- Optional LEAPS/options-specific fields and calculations.
 
 ## Safety Boundaries
 
@@ -233,5 +289,7 @@ This is not required for the local MCP MVP because all table-ready data is alrea
 - No broker connections.
 - No order placement.
 - No buy/sell trade execution tools.
+- No hardcoded secrets.
+- No claim that prices are real-time.
 - No claim that this is financial advice.
 - Watchlist and analysis workflow only.

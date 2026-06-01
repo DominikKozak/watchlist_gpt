@@ -14,12 +14,13 @@ type HttpRequest = Parameters<StreamableHTTPServerTransport["handleRequest"]>[0]
 type HttpResponse = Parameters<StreamableHTTPServerTransport["handleRequest"]>[1] & {
   status(code: number): { json(body: unknown): void };
 };
+type NextFunction = () => void;
 
 function createRequestScopedServer(): { server: McpServer; close: () => void } {
   const db = createDb();
   initializeDatabase(db);
   const priceProviderMode = getPriceProviderMode();
-  const tools = new WatchlistTools(db, createPriceProvider({ mode: priceProviderMode }));
+  const tools = new WatchlistTools(db, createPriceProvider({ mode: priceProviderMode }), priceProviderMode);
   const server = createInvestWatchlistMcpServer({ tools, priceProviderMode });
 
   return {
@@ -30,7 +31,31 @@ function createRequestScopedServer(): { server: McpServer; close: () => void } {
 
 const host = process.env.HTTP_HOST ?? "127.0.0.1";
 const port = Number(process.env.HTTP_PORT ?? 3000);
+const connectorApiKey = process.env.CONNECTOR_API_KEY?.trim();
 const app = createMcpExpressApp({ host });
+
+app.use("/mcp", (req: HttpRequest, res: HttpResponse, next: NextFunction) => {
+  if (!connectorApiKey) {
+    next();
+    return;
+  }
+
+  const authorization = req.headers.authorization;
+  const header = Array.isArray(authorization) ? authorization[0] : authorization;
+  if (header === `Bearer ${connectorApiKey}`) {
+    next();
+    return;
+  }
+
+  res.status(401).json({
+    jsonrpc: "2.0",
+    error: {
+      code: -32001,
+      message: "Unauthorized. Provide Authorization: Bearer <CONNECTOR_API_KEY>.",
+    },
+    id: null,
+  });
+});
 
 app.post("/mcp", async (req: HttpRequest, res: HttpResponse) => {
   const { server, close } = createRequestScopedServer();
@@ -93,4 +118,7 @@ app.listen(port, host, (error?: Error) => {
   }
 
   console.log(`Invest Watchlist MCP HTTP server listening at http://${host}:${port}/mcp`);
+  if (!connectorApiKey) {
+    console.warn("CONNECTOR_API_KEY is not set. HTTP /mcp is open for local development; set it before private hosted use.");
+  }
 });

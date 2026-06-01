@@ -14,6 +14,12 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
+function todayPlusDays(days: number): string {
+  const date = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 class StubCoinGeckoProvider implements PriceProvider {
   async getPrice(ticker: string, assetType: AssetType): Promise<PriceResult> {
     if (assetType !== "crypto") {
@@ -35,8 +41,20 @@ const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "invest-watchlist-"));
 const dbPath = path.join(tempDir, "verify.sqlite");
 const db = createDb(dbPath);
 initializeDatabase(db);
+const columns = db.prepare("PRAGMA table_info(assets)").all() as Array<{ name: string }>;
+for (const column of [
+  "targetBuyPrice",
+  "targetSellPrice",
+  "reviewFrequencyDays",
+  "thesisScore",
+  "riskScore",
+  "lastDecision",
+  "decisionReason",
+]) {
+  assert(columns.some((entry) => entry.name === column), `Expected assets.${column} column to exist.`);
+}
 process.env.PRICE_PROVIDER = "mock";
-const tools = new WatchlistTools(db, createPriceProvider());
+const tools = new WatchlistTools(db, createPriceProvider(), "mock");
 const server = createInvestWatchlistMcpServer({ tools, priceProviderMode: "mock" });
 const registeredTools = server as unknown as { _registeredTools?: Map<string, unknown> | Record<string, unknown> };
 const toolRegistry = registeredTools._registeredTools;
@@ -54,6 +72,10 @@ tools.addAsset({
   category: "LEAPS candidates",
   broker: "XTB",
   conviction: "B+",
+  targetBuyPrice: 380,
+  reviewFrequencyDays: 30,
+  thesisScore: 8,
+  riskScore: 4,
 });
 tools.addAsset({
   ticker: "META",
@@ -69,6 +91,9 @@ tools.addAsset({
   assetType: "crypto",
   category: "BTC / Crypto",
   conviction: "A",
+  reviewFrequencyDays: 14,
+  thesisScore: 9,
+  riskScore: 7,
 });
 tools.addAsset({
   ticker: "SPCE",
@@ -79,26 +104,57 @@ tools.addAsset({
   mainRisk: "high dilution / hype risk",
 });
 
-assert(tools.listWatchlist().assets.length === 4, "Expected four seeded assets.");
+const seededList = tools.listWatchlist();
+assert(seededList.assets.length === 4, "Expected four seeded assets.");
+assert(seededList.columns.some((column) => column.key === "targetBuyPrice"), "Expected UI columns metadata.");
+assert(seededList.summary.byCategory["LEAPS candidates"] === 2, "Expected category summary counts.");
+assert(seededList.summary.byStatus.watching === 4, "Expected status summary counts.");
+assert(seededList.priceProviderMode === "mock", "Expected list response to expose price provider mode.");
+assert(seededList.generatedAt, "Expected list response to include generatedAt.");
 
 tools.addAsset({
   ticker: "TEST",
-  name: "Test Asset",
+  name: 'Test "Asset"',
   assetType: "stock",
   category: "Needs review",
   status: "watching",
   currency: "USD",
+  targetBuyPrice: 10,
+  targetSellPrice: 20,
+  reviewFrequencyDays: 21,
+  thesisScore: 6,
+  riskScore: 5,
+  lastDecision: "watch",
+  decisionReason: "Verification path.",
 });
 tools.updateAsset({
   ticker: "TEST",
-  fields: { status: "needs_review", thesis: "Verification asset.", nextReviewDate: "2026-06-01" },
+  fields: { status: "needs_review", thesis: "Verification asset with | pipe.", targetBuyPrice: 11, lastDecision: "reviewed" },
 });
 tools.addNote({ ticker: "TEST", note: "Verification note." });
+const reviewed = tools.markReviewDone({ ticker: "TEST", reviewNote: "Looks fine." });
+assert(reviewed.asset.nextReviewDate === todayPlusDays(21), "Expected automatic nextReviewDate from reviewFrequencyDays.");
+assert(reviewed.note?.note === "Review: Looks fine.", "Expected review note to be added.");
+const detail = tools.getAsset({ ticker: "TEST" });
+assert(detail.displaySections.some((section) => section.key === "analysis"), "Expected detail display section metadata.");
+assert(detail.asset.targetBuyPrice === 11, "Expected updated targetBuyPrice.");
+assert(detail.asset.lastDecision === "reviewed", "Expected updated lastDecision.");
+let rejectedUnknownField = false;
+try {
+  tools.updateAsset({ ticker: "TEST", fields: { unknownField: "nope" } as never });
+} catch {
+  rejectedUnknownField = true;
+}
+assert(rejectedUnknownField, "Expected unknown update fields to be rejected.");
 const refreshResult = await tools.refreshPrices({ ticker: "TEST" });
 assert(refreshResult.updated.length === 1, "Expected TEST price refresh.");
 assert(refreshResult.updated[0]?.source === "mock", "Expected mock provider for PRICE_PROVIDER=mock.");
-assert(tools.exportWatchlistMarkdown().markdown.includes("| TEST |"), "Markdown export should include TEST.");
-assert(tools.exportWatchlistCsv().csv.includes('"TEST"'), "CSV export should include TEST.");
+const markdown = tools.exportWatchlistMarkdown().markdown;
+assert(markdown.includes("| TEST |"), "Markdown export should include TEST.");
+assert(markdown.includes("Verification asset with \\| pipe."), "Markdown export should escape pipe characters.");
+const csv = tools.exportWatchlistCsv().csv;
+assert(csv.includes('"TEST"'), "CSV export should include TEST.");
+assert(csv.includes('"Test ""Asset"""'), "CSV export should escape quotes.");
 const deleted = tools.deleteAsset({ ticker: "TEST" });
 assert(deleted.deleted, "Expected delete confirmation.");
 assert(tools.showLeapsCandidates().assets.length === 2, "Expected two LEAPS candidates.");

@@ -14,7 +14,8 @@
     "dev": "npm run dev:stdio",
     "dev:stdio": "tsx src/server.ts",
     "dev:http": "tsx src/httpServer.ts",
-    "verify": "tsx src/verify.ts"
+    "verify": "tsx src/verify.ts",
+    "verify:http": "npm run build && node dist/verifyHttp.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

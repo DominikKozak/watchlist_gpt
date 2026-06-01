@@ -12,7 +12,7 @@ const db = createDb();
 initializeDatabase(db);
 
 const priceProviderMode = getPriceProviderMode();
-const tools = new WatchlistTools(db, createPriceProvider({ mode: priceProviderMode }));
+const tools = new WatchlistTools(db, createPriceProvider({ mode: priceProviderMode }), priceProviderMode);
 const server = createInvestWatchlistMcpServer({ tools, priceProviderMode });
 
 const transport = new StdioServerTransport();
