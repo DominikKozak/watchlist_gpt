@@ -41,6 +41,23 @@ const server = spawn(process.execPath, [path.join("dist", "httpServer.js")], {
 try {
   await waitForServer(url);
 
+  const health = await fetch(`http://127.0.0.1:${port}/health`);
+  const healthBody = (await health.json()) as { status?: string; app?: string; version?: string; timestamp?: string };
+  assert(health.status === 200, "Expected /health to return 200 without auth.");
+  assert(healthBody.status === "ok", "Expected /health status ok.");
+  assert(healthBody.app === "Invest Watchlist", "Expected /health app name.");
+  assert(Boolean(healthBody.version), "Expected /health version.");
+  assert(Boolean(healthBody.timestamp), "Expected /health timestamp.");
+
+  const version = await fetch(`http://127.0.0.1:${port}/version`);
+  const versionText = await version.text();
+  const versionBody = JSON.parse(versionText) as { authEnabled?: boolean; database?: string };
+  assert(version.status === 200, "Expected /version to return 200 without auth.");
+  assert(versionBody.authEnabled === true, "Expected /version to report auth enabled.");
+  assert(versionBody.database === path.basename(dbPath), "Expected /version to expose only database basename.");
+  assert(!versionText.includes(dbPath), "Expected /version not to expose full database path.");
+  assert(!versionText.includes(apiKey), "Expected /version not to expose bearer token.");
+
   const unauthorized = await fetch(url, {
     method: "POST",
     headers: {

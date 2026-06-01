@@ -1,5 +1,8 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
+import type { RestoreMode } from "../backup/backupFormat.js";
+import { exportWatchlistBackup } from "../backup/exportBackup.js";
+import { importWatchlistBackup } from "../backup/importBackup.js";
 import type { PriceProvider } from "../prices/priceProvider.js";
 import {
   allowedAssetTypes,
@@ -113,6 +116,27 @@ export const markReviewDoneSchema = identifierBaseSchema
   })
   .refine((value) => value.id !== undefined || value.ticker !== undefined, "Provide ticker or id.");
 
+export const searchAssetsSchema = z.object({
+  query: z.string().trim().min(1),
+});
+
+export const setAssetDecisionSchema = identifierBaseSchema
+  .extend({
+    lastDecision: z.string().trim().min(1),
+    decisionReason: z.string().trim().min(1).optional(),
+    conviction: z.string().trim().min(1).optional(),
+    status: statusSchema.optional(),
+    reviewNote: z.string().trim().min(1).optional(),
+    nextReviewDate: z.string().optional(),
+  })
+  .refine((value) => value.id !== undefined || value.ticker !== undefined, "Provide ticker or id.");
+
+export const importWatchlistJsonSchema = z.object({
+  backup: z.unknown(),
+  dryRun: z.boolean().optional(),
+  mode: z.enum(["upsert", "skip_existing", "replace_all"]).optional(),
+});
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -169,6 +193,10 @@ function findAsset(db: Database.Database, identifier: AssetIdentifier): Asset {
   }
 
   return rowToAsset(row);
+}
+
+function likeQuery(query: string): string {
+  return `%${query.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
 }
 
 export class WatchlistTools {
@@ -445,6 +473,116 @@ export class WatchlistTools {
     return { beforeDate, assets };
   }
 
+  portfolioSummary() {
+    const assets = this.db.prepare("SELECT * FROM assets ORDER BY ticker COLLATE NOCASE").all() as Asset[];
+    const due = this.listReviewDue().assets as Asset[];
+    const mockPriceRows = this.db
+      .prepare(
+        `SELECT DISTINCT assets.*
+         FROM assets
+         JOIN price_history ON price_history.assetId = assets.id
+         WHERE price_history.source = 'mock'
+         ORDER BY assets.ticker COLLATE NOCASE`,
+      )
+      .all() as Asset[];
+    const warnings: string[] = [];
+    const missingPrice = assets.filter((asset) => asset.currentPrice == null);
+    const highRiskAssets = assets.filter(
+      (asset) =>
+        asset.category === "Speculative / WSB" ||
+        (asset.riskScore !== null && asset.riskScore >= 8) ||
+        asset.conviction === "C",
+    );
+
+    if (this.priceProviderMode === "mock") {
+      warnings.push("PRICE_PROVIDER=mock returns deterministic test prices, not market data.");
+    }
+    if (missingPrice.length > 0) {
+      warnings.push(`${missingPrice.length} assets are missing current price data.`);
+    }
+
+    return {
+      totalAssets: assets.length,
+      countsByCategory: countBy(assets.map((asset) => asset.category)),
+      countsByStatus: countBy(assets.map((asset) => asset.status)),
+      countsByAssetType: countBy(assets.map((asset) => asset.assetType)),
+      assetsDueForReview: due,
+      assetsMissingPrice: missingPrice,
+      assetsWithMockPrices: mockPriceRows,
+      leapsCandidates: assets.filter((asset) => asset.category === "LEAPS candidates"),
+      speculativeHighRiskAssets: highRiskAssets,
+      generatedAt: nowIso(),
+      warnings,
+    };
+  }
+
+  searchAssets(input: { query: string }) {
+    const parsed = searchAssetsSchema.parse(input);
+    const query = likeQuery(parsed.query);
+    const assets = this.db
+      .prepare(
+        `SELECT DISTINCT assets.*
+         FROM assets
+         LEFT JOIN notes ON notes.assetId = assets.id
+         WHERE assets.ticker LIKE ? ESCAPE '\\'
+            OR assets.name LIKE ? ESCAPE '\\'
+            OR assets.thesis LIKE ? ESCAPE '\\'
+            OR assets.mainRisk LIKE ? ESCAPE '\\'
+            OR assets.decisionReason LIKE ? ESCAPE '\\'
+            OR notes.note LIKE ? ESCAPE '\\'
+         ORDER BY assets.ticker COLLATE NOCASE`,
+      )
+      .all(query, query, query, query, query, query) as Asset[];
+    const notes = this.db
+      .prepare(
+        `SELECT notes.*
+         FROM notes
+         JOIN assets ON assets.id = notes.assetId
+         WHERE notes.note LIKE ? ESCAPE '\\'
+            OR assets.ticker LIKE ? ESCAPE '\\'
+            OR assets.name LIKE ? ESCAPE '\\'
+         ORDER BY notes.createdAt DESC`,
+      )
+      .all(query, query, query) as Note[];
+
+    return {
+      query: parsed.query,
+      matchingAssets: assets,
+      matchingNotes: notes,
+      generatedAt: nowIso(),
+    };
+  }
+
+  setAssetDecision(input: AssetIdentifier & {
+    lastDecision: string;
+    decisionReason?: string;
+    conviction?: string;
+    status?: string;
+    reviewNote?: string;
+    nextReviewDate?: string;
+  }) {
+    const parsed = setAssetDecisionSchema.parse(input);
+    const fields: UpdateAssetFields = {
+      lastDecision: parsed.lastDecision,
+    };
+    if (parsed.decisionReason !== undefined) fields.decisionReason = parsed.decisionReason;
+    if (parsed.conviction !== undefined) fields.conviction = parsed.conviction;
+    if (parsed.status !== undefined) fields.status = parsed.status;
+    if (parsed.nextReviewDate !== undefined) fields.nextReviewDate = parsed.nextReviewDate;
+
+    const updated = this.updateAsset({ id: parsed.id, ticker: parsed.ticker, fields }).asset;
+    let note: Note | null = null;
+    if (parsed.reviewNote) {
+      note = this.addNote({ id: updated.id, note: `Decision: ${parsed.reviewNote}` }).note;
+    }
+
+    return {
+      asset: findAsset(this.db, { id: updated.id }),
+      note,
+      message: "Decision updated for watchlist analysis only. No trades or broker actions were performed.",
+    };
+  }
+
   markReviewDone(input: AssetIdentifier & { reviewNote?: string; nextReviewDate?: string }) {
     const parsed = markReviewDoneSchema.parse(input);
     const asset = findAsset(this.db, parsed);
@@ -543,5 +681,23 @@ export class WatchlistTools {
         .join(","),
     );
     return { csv: [header.join(","), ...csvRows].join("\n") };
+  }
+
+  exportWatchlistJson() {
+    return { backup: exportWatchlistBackup(this.db) };
+  }
+
+  importWatchlistJson(input: { backup: unknown; dryRun?: boolean; mode?: RestoreMode }) {
+    const parsed = importWatchlistJsonSchema.parse(input);
+    const summary = importWatchlistBackup(this.db, parsed.backup, {
+      dryRun: parsed.dryRun ?? false,
+      mode: parsed.mode ?? "upsert",
+    });
+
+    return {
+      summary,
+      warning:
+        "JSON import modifies local watchlist data only. It never connects to brokers and never places trades.",
+    };
   }
 }

@@ -12,9 +12,12 @@ It is intentionally **not** a trading system. It never places trades, never conn
 - Hosted/stateless Streamable HTTP MCP endpoint at `POST /mcp` in `src/httpServer.ts`.
 - Shared MCP server and tool registration in `src/mcp/createServer.ts`.
 - Optional bearer-token protection for HTTP with `CONNECTOR_API_KEY`.
+- Public unauthenticated `GET /health` and `GET /version` operational endpoints.
+- JSON backup and restore for assets, notes, and price history.
 - SQLite schema with safe backwards-compatible column migration.
-- Watchlist tools for listing, detail, add, update, delete, notes, review workflow, price refresh, buy-zone view, LEAPS view, Markdown export, and CSV export.
+- Watchlist tools for listing, detail, add, update, delete, notes, review workflow, portfolio summary, search, decision tracking, price refresh, buy-zone view, LEAPS view, and Markdown/CSV/JSON export.
 - UI-ready list and detail responses for future Apps SDK rendering.
+- Dockerfile for hosted HTTP deployment.
 - Runtime price provider routing with `mock`, `coingecko`, and `hybrid`.
 - Verification scripts for core tool behavior and HTTP bearer smoke testing.
 
@@ -58,6 +61,14 @@ HTTP_HOST=127.0.0.1
 HTTP_PORT=3000
 CONNECTOR_API_KEY=
 ```
+
+Optional restore mode:
+
+```env
+RESTORE_MODE=upsert
+```
+
+Supported restore modes are `upsert`, `skip_existing`, and `replace_all`. `replace_all` deletes current local watchlist data before import and must be set explicitly.
 
 `CONNECTOR_API_KEY` applies only to the HTTP entrypoint. If it is set, every `/mcp` request must include:
 
@@ -109,6 +120,15 @@ npm run start:stdio
 
 `npm run dev` and `npm start` are stdio aliases.
 
+Quick start:
+
+```bash
+npm install
+npm run db:init
+npm run seed
+npm run dev:stdio
+```
+
 ## Run HTTP MCP
 
 The hosted entrypoint uses the MCP SDK `StreamableHTTPServerTransport` in stateless mode. Each HTTP request creates a request-scoped MCP server and SQLite handle, registers the same shared tools, handles the request, then closes its resources.
@@ -133,6 +153,28 @@ http://127.0.0.1:3000/mcp
 ```
 
 Configure with `HTTP_HOST` and `HTTP_PORT`.
+
+Quick start:
+
+```bash
+npm install
+npm run db:init
+npm run seed
+npm run dev:http
+```
+
+### Health and Version
+
+These endpoints never require `CONNECTOR_API_KEY`:
+
+```bash
+curl http://127.0.0.1:3000/health
+curl http://127.0.0.1:3000/version
+```
+
+`GET /health` returns status, app name, version, and timestamp.
+
+`GET /version` returns app name, package version, node environment, price provider mode, auth enabled status, and safe database configuration. It exposes only the database basename or a safe configured value, never secrets or bearer tokens.
 
 ### Manual HTTP Test
 
@@ -168,10 +210,15 @@ Both stdio and HTTP register the same tools:
 - `refresh_prices`
 - `list_review_due`
 - `mark_review_done`
+- `portfolio_summary`
+- `search_assets`
+- `set_asset_decision`
 - `show_buy_zone`
 - `show_leaps_candidates`
 - `export_watchlist_markdown`
 - `export_watchlist_csv`
+- `export_watchlist_json`
+- `import_watchlist_json`
 
 The tool descriptions are written so ChatGPT can map phrases like:
 
@@ -182,6 +229,19 @@ The tool descriptions are written so ChatGPT can map phrases like:
 - `add MSFT to LEAPS candidates`
 - `update BTC thesis`
 - `refresh prices`
+- `portfolio summary`
+- `search assets containing AI`
+- `set MSFT decision to keep watching`
+
+`portfolio_summary` is read-only and returns counts by category, status, and asset type plus review-due assets, missing-price assets, mock-price assets, LEAPS candidates, speculative/high-risk assets, warnings, and `generatedAt`.
+
+`search_assets` is read-only and searches ticker, name, thesis, main risk, decision reason, and notes.
+
+`set_asset_decision` updates local analysis fields such as `lastDecision`, optional `decisionReason`, `conviction`, `status`, `nextReviewDate`, and optional review note. It never places trades and never implies execution.
+
+`export_watchlist_json` returns the versioned JSON backup object.
+
+`import_watchlist_json` validates and imports a versioned JSON backup with `dryRun` and `mode: upsert | skip_existing | replace_all`.
 
 ## UI-Ready Output
 
@@ -244,6 +304,62 @@ If `reviewNote` is provided, the tool also adds a note prefixed with `Review:`.
 
 `refresh_prices` keeps partial-failure behavior. If one ticker fails, the tool reports it in `failed` and continues refreshing the rest.
 
+## Backup and Restore
+
+Create a timestamped JSON backup in `./backups`:
+
+```bash
+npm run backup
+```
+
+The backup includes:
+
+- `version`
+- `exportedAt`
+- `assets`
+- `notes`
+- `priceHistory`
+
+It does not include API keys, bearer tokens, `.env` values, or broker credentials.
+
+Restore from a backup:
+
+```bash
+npm run restore -- backups/watchlist-example.json
+```
+
+Default restore mode is `upsert`.
+
+Use `skip_existing`:
+
+```bash
+RESTORE_MODE=skip_existing npm run restore -- backups/watchlist-example.json
+```
+
+Use `replace_all` only when you intentionally want to delete current local watchlist data first:
+
+```bash
+RESTORE_MODE=replace_all npm run restore -- backups/watchlist-example.json
+```
+
+The MCP tools `export_watchlist_json` and `import_watchlist_json` use the same versioned backup format.
+
+## Docker
+
+Build:
+
+```bash
+npm run docker:build
+```
+
+Run:
+
+```bash
+npm run docker:run
+```
+
+The Docker image defaults to the HTTP server with `HTTP_HOST=0.0.0.0` and `HTTP_PORT=3000`. The `.env`, `data`, `backups`, `dist`, and `node_modules` directories are excluded by `.dockerignore`.
+
 ## Verify
 
 Core verification:
@@ -253,6 +369,7 @@ npm run verify
 ```
 
 It validates database initialization, MCP tool registration, seed-like asset creation, add/update/delete, notes, review auto-date behavior, mock provider mode, hybrid provider routing, Markdown/CSV export, new fields, and rejection of unknown update fields.
+It also validates `portfolio_summary`, `search_assets`, `set_asset_decision`, `export_watchlist_json`, `import_watchlist_json` dry-run/upsert behavior, and backup/restore helper functions.
 
 HTTP smoke verification:
 
@@ -260,7 +377,7 @@ HTTP smoke verification:
 npm run verify:http
 ```
 
-It builds the project, starts the compiled HTTP server against a temporary database with `CONNECTOR_API_KEY`, verifies unauthorized requests return `401`, and verifies an authorized MCP initialize request succeeds.
+It builds the project, starts the compiled HTTP server against a temporary database with `CONNECTOR_API_KEY`, verifies `/health` and `/version` return `200` without auth, verifies `/version` does not expose secrets or the full database path, verifies unauthorized `/mcp` requests return `401`, and verifies an authorized MCP initialize request succeeds.
 
 ## Private ChatGPT Connector Path
 
@@ -282,6 +399,7 @@ For private hosted connector testing:
 - Apps SDK UI resource for compact table and detail views.
 - Real stock/ETF quote provider behind `STOCK_API_PROVIDER` and `STOCK_API_KEY`.
 - Optional LEAPS/options-specific fields and calculations.
+- Hosted volume/backup retention policy.
 
 ## Safety Boundaries
 

@@ -6,7 +6,10 @@
   "description": "Private MCP watchlist connector for personal investment analysis.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "backup": "tsx src/backupCli.ts",
     "db:init": "tsx src/db/schema.ts",
+    "docker:build": "docker build -t invest-watchlist .",
+    "docker:run": "docker run --rm -p 3000:3000 --env-file .env -e HTTP_HOST=0.0.0.0 invest-watchlist",
     "seed": "tsx src/seed.ts",
     "start": "npm run start:stdio",
     "start:stdio": "node dist/server.js",
@@ -15,7 +18,8 @@
     "dev:stdio": "tsx src/server.ts",
     "dev:http": "tsx src/httpServer.ts",
     "verify": "tsx src/verify.ts",
-    "verify:http": "npm run build && node dist/verifyHttp.js"
+    "verify:http": "npm run build && node dist/verifyHttp.js",
+    "restore": "tsx src/restoreCli.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

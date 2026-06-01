@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { exportWatchlistBackup } from "./backup/exportBackup.js";
+import { importWatchlistBackup } from "./backup/importBackup.js";
 import { createDb } from "./db/client.js";
 import { initializeDatabase } from "./db/schema.js";
 import { createInvestWatchlistMcpServer, expectedToolNames } from "./mcp/createServer.js";
@@ -135,10 +137,21 @@ tools.addNote({ ticker: "TEST", note: "Verification note." });
 const reviewed = tools.markReviewDone({ ticker: "TEST", reviewNote: "Looks fine." });
 assert(reviewed.asset.nextReviewDate === todayPlusDays(21), "Expected automatic nextReviewDate from reviewFrequencyDays.");
 assert(reviewed.note?.note === "Review: Looks fine.", "Expected review note to be added.");
+const decision = tools.setAssetDecision({
+  ticker: "TEST",
+  lastDecision: "keep watching",
+  decisionReason: "Verification decision.",
+  conviction: "B",
+  status: "watching",
+  reviewNote: "Decision helper note.",
+});
+assert(decision.asset.lastDecision === "keep watching", "Expected set_asset_decision to update lastDecision.");
+assert(decision.asset.decisionReason === "Verification decision.", "Expected set_asset_decision to update decisionReason.");
+assert(decision.note?.note === "Decision: Decision helper note.", "Expected set_asset_decision to add optional note.");
 const detail = tools.getAsset({ ticker: "TEST" });
 assert(detail.displaySections.some((section) => section.key === "analysis"), "Expected detail display section metadata.");
 assert(detail.asset.targetBuyPrice === 11, "Expected updated targetBuyPrice.");
-assert(detail.asset.lastDecision === "reviewed", "Expected updated lastDecision.");
+assert(detail.asset.lastDecision === "keep watching", "Expected updated lastDecision.");
 let rejectedUnknownField = false;
 try {
   tools.updateAsset({ ticker: "TEST", fields: { unknownField: "nope" } as never });
@@ -149,12 +162,39 @@ assert(rejectedUnknownField, "Expected unknown update fields to be rejected.");
 const refreshResult = await tools.refreshPrices({ ticker: "TEST" });
 assert(refreshResult.updated.length === 1, "Expected TEST price refresh.");
 assert(refreshResult.updated[0]?.source === "mock", "Expected mock provider for PRICE_PROVIDER=mock.");
+const summary = tools.portfolioSummary();
+assert(summary.totalAssets === 5, "Expected portfolio summary to include five assets before delete.");
+assert(summary.countsByAssetType.stock >= 4, "Expected portfolio summary counts by asset type.");
+assert(summary.assetsWithMockPrices.some((asset) => asset.ticker === "TEST"), "Expected portfolio summary mock price assets.");
+const searchResult = tools.searchAssets({ query: "Verification" });
+assert(searchResult.matchingAssets.some((asset) => asset.ticker === "TEST"), "Expected search_assets to find TEST asset.");
+assert(searchResult.matchingNotes.some((note) => note.note.includes("Verification")), "Expected search_assets to find matching notes.");
 const markdown = tools.exportWatchlistMarkdown().markdown;
 assert(markdown.includes("| TEST |"), "Markdown export should include TEST.");
 assert(markdown.includes("Verification asset with \\| pipe."), "Markdown export should escape pipe characters.");
 const csv = tools.exportWatchlistCsv().csv;
 assert(csv.includes('"TEST"'), "CSV export should include TEST.");
 assert(csv.includes('"Test ""Asset"""'), "CSV export should escape quotes.");
+const exportedBackup = tools.exportWatchlistJson().backup;
+assert(exportedBackup.version === 1, "Expected export_watchlist_json backup version.");
+assert(exportedBackup.assets.some((asset) => asset.ticker === "TEST"), "Expected exported backup to include TEST.");
+const dryRunImport = tools.importWatchlistJson({ backup: exportedBackup, dryRun: true, mode: "upsert" });
+assert(dryRunImport.summary.dryRun, "Expected import_watchlist_json dryRun summary.");
+const helperBackup = exportWatchlistBackup(db);
+assert(helperBackup.assets.length >= 5, "Expected helper backup to export assets.");
+
+const restoreDbPath = path.join(tempDir, "restore.sqlite");
+const restoreDb = createDb(restoreDbPath);
+initializeDatabase(restoreDb);
+const dryRunHelper = importWatchlistBackup(restoreDb, helperBackup, { dryRun: true, mode: "upsert" });
+assert(dryRunHelper.assetsCreated >= 5, "Expected helper dryRun to plan asset creation.");
+const importedHelper = importWatchlistBackup(restoreDb, helperBackup, { mode: "upsert" });
+assert(importedHelper.assetsCreated >= 5, "Expected helper upsert to create assets.");
+const restoredTools = new WatchlistTools(restoreDb, createPriceProvider({ mode: "mock" }), "mock");
+assert(restoredTools.getAsset({ ticker: "TEST" }).asset.ticker === "TEST", "Expected restored DB to contain TEST.");
+const toolImport = restoredTools.importWatchlistJson({ backup: exportedBackup, mode: "upsert" });
+assert(toolImport.summary.assetsUpdated >= 5, "Expected import_watchlist_json upsert to update existing assets.");
+restoreDb.close();
 const deleted = tools.deleteAsset({ ticker: "TEST" });
 assert(deleted.deleted, "Expected delete confirmation.");
 assert(tools.showLeapsCandidates().assets.length === 2, "Expected two LEAPS candidates.");

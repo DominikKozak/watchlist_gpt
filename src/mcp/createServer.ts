@@ -13,10 +13,15 @@ export const expectedToolNames = [
   "refresh_prices",
   "list_review_due",
   "mark_review_done",
+  "portfolio_summary",
+  "search_assets",
+  "set_asset_decision",
   "show_buy_zone",
   "show_leaps_candidates",
   "export_watchlist_markdown",
   "export_watchlist_csv",
+  "export_watchlist_json",
+  "import_watchlist_json",
 ] as const;
 
 interface CreateServerOptions {
@@ -200,6 +205,61 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
   );
 
   server.registerTool(
+    "portfolio_summary",
+    {
+      title: "Portfolio summary",
+      description:
+        "Read-only. Summarize the watchlist by category, status, type, review needs, missing prices, mock prices, LEAPS candidates, and speculative/high-risk assets.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () => asMcpResponse(tools.portfolioSummary()),
+  );
+
+  server.registerTool(
+    "search_assets",
+    {
+      title: "Search watchlist assets",
+      description: "Read-only. Search ticker, name, thesis, risk, decision reason, and notes.",
+      inputSchema: { query: z.string() },
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => asMcpResponse(tools.searchAssets(input as { query: string })),
+  );
+
+  server.registerTool(
+    "set_asset_decision",
+    {
+      title: "Set watchlist decision",
+      description:
+        "Write tool. Update analysis decision fields and optional review metadata for a watchlist asset. This never places trades and never connects to a broker.",
+      inputSchema: {
+        id: z.number().optional(),
+        ticker: z.string().optional(),
+        lastDecision: z.string(),
+        decisionReason: z.string().optional(),
+        conviction: z.string().optional(),
+        status: z.string().optional(),
+        reviewNote: z.string().optional(),
+        nextReviewDate: z.string().optional(),
+      },
+    },
+    async (input) =>
+      asMcpResponse(
+        tools.setAssetDecision(
+          input as AssetIdentifier & {
+            lastDecision: string;
+            decisionReason?: string;
+            conviction?: string;
+            status?: string;
+            reviewNote?: string;
+            nextReviewDate?: string;
+          },
+        ),
+      ),
+  );
+
+  server.registerTool(
     "show_buy_zone",
     {
       title: "Show buy zone assets",
@@ -241,6 +301,42 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
       annotations: { readOnlyHint: true },
     },
     async () => asMcpResponse(tools.exportWatchlistCsv()),
+  );
+
+  server.registerTool(
+    "export_watchlist_json",
+    {
+      title: "Export watchlist as JSON backup",
+      description: "Read-only. Export a versioned JSON backup object for assets, notes, and price history.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () => asMcpResponse(tools.exportWatchlistJson()),
+  );
+
+  server.registerTool(
+    "import_watchlist_json",
+    {
+      title: "Import watchlist JSON backup",
+      description:
+        "Write/destructive tool. Import a versioned JSON backup into the local watchlist using dryRun, upsert, skip_existing, or replace_all. This never places trades or contacts brokers.",
+      inputSchema: {
+        backup: z.unknown(),
+        dryRun: z.boolean().optional(),
+        mode: z.enum(["upsert", "skip_existing", "replace_all"]).optional(),
+      },
+      annotations: { destructiveHint: true },
+    },
+    async (input) =>
+      asMcpResponse(
+        tools.importWatchlistJson(
+          input as {
+            backup: unknown;
+            dryRun?: boolean;
+            mode?: "upsert" | "skip_existing" | "replace_all";
+          },
+        ),
+      ),
   );
 
   return server;

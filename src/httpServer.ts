@@ -2,7 +2,9 @@ import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import dotenv from "dotenv";
-import { createDb } from "./db/client.js";
+import fs from "node:fs";
+import path from "node:path";
+import { createDb, getDatabasePath } from "./db/client.js";
 import { initializeDatabase } from "./db/schema.js";
 import { createInvestWatchlistMcpServer } from "./mcp/createServer.js";
 import { createPriceProvider, getPriceProviderMode } from "./prices/providerFactory.js";
@@ -12,9 +14,22 @@ dotenv.config();
 
 type HttpRequest = Parameters<StreamableHTTPServerTransport["handleRequest"]>[0] & { body?: unknown };
 type HttpResponse = Parameters<StreamableHTTPServerTransport["handleRequest"]>[1] & {
+  json(body: unknown): void;
   status(code: number): { json(body: unknown): void };
 };
 type NextFunction = () => void;
+
+function readPackageVersion(): string {
+  const packageJsonPath = path.resolve("package.json");
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as { name?: string; version?: string };
+  return packageJson.version ?? "0.0.0";
+}
+
+function safeDatabaseConfig(): string {
+  const configuredPath = getDatabasePath();
+  if (!configuredPath) return "default";
+  return path.basename(configuredPath) || "configured";
+}
 
 function createRequestScopedServer(): { server: McpServer; close: () => void } {
   const db = createDb();
@@ -32,7 +47,29 @@ function createRequestScopedServer(): { server: McpServer; close: () => void } {
 const host = process.env.HTTP_HOST ?? "127.0.0.1";
 const port = Number(process.env.HTTP_PORT ?? 3000);
 const connectorApiKey = process.env.CONNECTOR_API_KEY?.trim();
+const appName = "Invest Watchlist";
+const appVersion = readPackageVersion();
 const app = createMcpExpressApp({ host });
+
+app.get("/health", (_req: HttpRequest, res: HttpResponse) => {
+  res.json({
+    status: "ok",
+    app: appName,
+    version: appVersion,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get("/version", (_req: HttpRequest, res: HttpResponse) => {
+  res.json({
+    app: appName,
+    version: appVersion,
+    nodeEnv: process.env.NODE_ENV ?? "development",
+    priceProviderMode: getPriceProviderMode(),
+    authEnabled: Boolean(connectorApiKey),
+    database: safeDatabaseConfig(),
+  });
+});
 
 app.use("/mcp", (req: HttpRequest, res: HttpResponse, next: NextFunction) => {
   if (!connectorApiKey) {
