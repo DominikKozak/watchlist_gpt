@@ -18,6 +18,8 @@ It is intentionally **not** a trading system. It never places trades, never conn
 - Watchlist tools for listing, detail, add, update, delete, notes, review workflow, portfolio summary, search, decision tracking, price refresh, buy-zone view, LEAPS view, and Markdown/CSV/JSON export.
 - UI-ready list and detail responses for future Apps SDK rendering.
 - Dockerfile for hosted HTTP deployment.
+- Optional Turso/libSQL database provider for free hosted deployments.
+- Render blueprint for a free web service backed by Turso.
 - Runtime price provider routing with `mock`, `coingecko`, and `hybrid`.
 - Verification scripts for core tool behavior and HTTP bearer smoke testing.
 
@@ -53,6 +55,9 @@ Copy-Item .env.example .env
 
 ```env
 DATABASE_PATH=./data/watchlist.sqlite
+DB_PROVIDER=sqlite
+TURSO_DATABASE_URL=
+TURSO_AUTH_TOKEN=
 PRICE_PROVIDER=mock
 COINGECKO_API_KEY=
 STOCK_API_KEY=
@@ -79,6 +84,10 @@ Authorization: Bearer <CONNECTOR_API_KEY>
 If `CONNECTOR_API_KEY` is empty, HTTP is allowed for local development and the server prints a warning at startup. Do not expose an unauthenticated HTTP server beyond a trusted local environment.
 
 No API keys or secrets are hardcoded.
+
+`DB_PROVIDER=sqlite` is the local default and uses `DATABASE_PATH`.
+
+`DB_PROVIDER=turso` uses `TURSO_DATABASE_URL` and optional `TURSO_AUTH_TOKEN`. Use this for Render or other stateless free hosting where local SQLite files are not persistent.
 
 ## Initialize Database
 
@@ -360,6 +369,56 @@ npm run docker:run
 
 The Docker image defaults to the HTTP server with `HTTP_HOST=0.0.0.0` and `HTTP_PORT=3000`. The `.env`, `data`, `backups`, `dist`, and `node_modules` directories are excluded by `.dockerignore`.
 
+## Free Hosted Test: Render + Turso
+
+This project can run as:
+
+```text
+ChatGPT -> Render Free HTTPS service -> Turso Free libSQL database
+```
+
+Why this works better than SQLite on Render Free:
+
+- Render Free web services do not provide reliable local persistent disk for SQLite state.
+- Turso keeps the watchlist data in a hosted libSQL database.
+- The Node MCP server stays stateless and can sleep/wake on Render.
+
+Expected tradeoffs:
+
+- First request after inactivity can be slow because Render Free may spin down.
+- Turso free databases may also have cold-start behavior.
+- This is suitable for private testing, not critical production use.
+
+Render deployment files:
+
+- `Dockerfile`
+- `render.yaml`
+
+Required Render env vars:
+
+```env
+DB_PROVIDER=turso
+TURSO_DATABASE_URL=libsql://...
+TURSO_AUTH_TOKEN=...
+CONNECTOR_API_KEY=long-random-private-token
+HTTP_HOST=0.0.0.0
+HTTP_PORT=3000
+PRICE_PROVIDER=hybrid
+```
+
+After deploy, verify:
+
+```bash
+curl https://your-render-service.onrender.com/health
+curl https://your-render-service.onrender.com/version
+```
+
+Then verify `/mcp` auth with the same initialize request shown above, adding:
+
+```text
+Authorization: Bearer <CONNECTOR_API_KEY>
+```
+
 ## Verify
 
 Core verification:
@@ -386,11 +445,12 @@ For private hosted connector testing:
 1. Run `npm install`.
 2. Run `npm run build`.
 3. Set production env vars, especially `DATABASE_PATH`, `PRICE_PROVIDER`, `HTTP_HOST`, `HTTP_PORT`, and `CONNECTOR_API_KEY`.
-4. Run `npm run start:http`.
-5. Put the app behind HTTPS. Private ChatGPT connector flows generally require HTTPS, not a plain local HTTP URL.
-6. Point the private connector configuration at `https://your-host.example/mcp`.
-7. Keep bearer auth for private testing, then replace or layer it with the auth required by your connector deployment model.
-8. Add an Apps SDK UI component later if you want a custom table/detail experience.
+4. For Render/Turso, set `DB_PROVIDER=turso`, `TURSO_DATABASE_URL`, and `TURSO_AUTH_TOKEN` instead of relying on local `DATABASE_PATH`.
+5. Run `npm run start:http`.
+6. Put the app behind HTTPS. Private ChatGPT connector flows generally require HTTPS, not a plain local HTTP URL.
+7. Point the private connector configuration at `https://your-host.example/mcp`.
+8. Keep bearer auth for private testing, then replace or layer it with the auth required by your connector deployment model.
+9. Add an Apps SDK UI component later if you want a custom table/detail experience.
 
 ## Future TODO
 

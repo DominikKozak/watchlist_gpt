@@ -1,8 +1,8 @@
-import type Database from "better-sqlite3";
 import { z } from "zod";
 import type { RestoreMode } from "../backup/backupFormat.js";
 import { exportWatchlistBackup } from "../backup/exportBackup.js";
 import { importWatchlistBackup } from "../backup/importBackup.js";
+import type { AppDb } from "../db/client.js";
 import type { PriceProvider } from "../prices/priceProvider.js";
 import {
   allowedAssetTypes,
@@ -182,11 +182,11 @@ function rowToAsset(row: unknown): Asset {
   return row as Asset;
 }
 
-function findAsset(db: Database.Database, identifier: AssetIdentifier): Asset {
+async function findAsset(db: AppDb, identifier: AssetIdentifier): Promise<Asset> {
   const row =
     identifier.id !== undefined
-      ? db.prepare("SELECT * FROM assets WHERE id = ?").get(identifier.id)
-      : db.prepare("SELECT * FROM assets WHERE ticker = ? COLLATE NOCASE").get(identifier.ticker);
+      ? await db.get<Asset>("SELECT * FROM assets WHERE id = ?", [identifier.id])
+      : await db.get<Asset>("SELECT * FROM assets WHERE ticker = ? COLLATE NOCASE", [identifier.ticker]);
 
   if (!row) {
     throw new Error("Asset not found.");
@@ -201,12 +201,12 @@ function likeQuery(query: string): string {
 
 export class WatchlistTools {
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: AppDb,
     private readonly priceProvider: PriceProvider,
     private readonly priceProviderMode = "mock",
   ) {}
 
-  listWatchlist(input: ListWatchlistInput = {}) {
+  async listWatchlist(input: ListWatchlistInput = {}) {
     const parsed = listWatchlistSchema.parse(input);
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -230,7 +230,7 @@ export class WatchlistTools {
 
     const sortBy = parsed.sortBy ?? "ticker";
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const rows = this.db.prepare(`SELECT * FROM assets ${where} ORDER BY ${sortBy} COLLATE NOCASE`).all(...params) as Asset[];
+    const rows = await this.db.all<Asset>(`SELECT * FROM assets ${where} ORDER BY ${sortBy} COLLATE NOCASE`, params);
     const assets = rows.map((asset) => ({
       id: asset.id,
       ticker: asset.ticker,
@@ -291,15 +291,14 @@ export class WatchlistTools {
     };
   }
 
-  getAsset(input: AssetIdentifier) {
+  async getAsset(input: AssetIdentifier) {
     const parsed = identifierSchema.parse(input);
-    const asset = findAsset(this.db, parsed);
-    const notes = this.db
-      .prepare("SELECT * FROM notes WHERE assetId = ? ORDER BY createdAt DESC LIMIT 10")
-      .all(asset.id) as Note[];
-    const priceHistory = this.db
-      .prepare("SELECT * FROM price_history WHERE assetId = ? ORDER BY timestamp DESC LIMIT 20")
-      .all(asset.id) as PriceHistory[];
+    const asset = await findAsset(this.db, parsed);
+    const notes = await this.db.all<Note>("SELECT * FROM notes WHERE assetId = ? ORDER BY createdAt DESC LIMIT 10", [asset.id]);
+    const priceHistory = await this.db.all<PriceHistory>(
+      "SELECT * FROM price_history WHERE assetId = ? ORDER BY timestamp DESC LIMIT 20",
+      [asset.id],
+    );
     const warnings: string[] = [];
     if (priceHistory.some((price) => price.source === "mock")) {
       warnings.push("Latest stored price history includes mock prices.");
@@ -331,19 +330,17 @@ export class WatchlistTools {
     };
   }
 
-  addAsset(input: AddAssetInput) {
+  async addAsset(input: AddAssetInput) {
     const parsed = addAssetSchema.parse(input);
     const timestamp = nowIso();
-    const result = this.db
-      .prepare(
-        `INSERT INTO assets (
+    const result = await this.db.run(
+      `INSERT INTO assets (
           ticker, name, assetType, category, broker, status, conviction, thesis, mainRisk, buyZone,
           currentPrice, currency, priceChange1d, priceChange7d, priceChange30d, lastPriceUpdate,
           lastReviewDate, nextReviewDate, targetBuyPrice, targetSellPrice, reviewFrequencyDays,
           thesisScore, riskScore, lastDecision, decisionReason, createdAt, updatedAt
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
+      [
         normalizeTicker(parsed.ticker),
         parsed.name ?? null,
         parsed.assetType,
@@ -364,14 +361,15 @@ export class WatchlistTools {
         parsed.decisionReason ?? null,
         timestamp,
         timestamp,
-      );
+      ],
+    );
 
-    return { asset: findAsset(this.db, { id: Number(result.lastInsertRowid) }) };
+    return { asset: await findAsset(this.db, { id: Number(result.lastInsertRowid) }) };
   }
 
-  updateAsset(input: AssetIdentifier & { fields: UpdateAssetFields }) {
+  async updateAsset(input: AssetIdentifier & { fields: UpdateAssetFields }) {
     const parsed = updateAssetSchema.parse(input);
-    const asset = findAsset(this.db, parsed);
+    const asset = await findAsset(this.db, parsed);
     const entries = Object.entries(parsed.fields).filter(([, value]) => value !== undefined);
 
     if (!entries.length) {
@@ -383,14 +381,14 @@ export class WatchlistTools {
     assignments.push("updatedAt = ?");
     values.push(nowIso(), asset.id);
 
-    this.db.prepare(`UPDATE assets SET ${assignments.join(", ")} WHERE id = ?`).run(...values);
-    return { asset: findAsset(this.db, { id: asset.id }) };
+    await this.db.run(`UPDATE assets SET ${assignments.join(", ")} WHERE id = ?`, values);
+    return { asset: await findAsset(this.db, { id: asset.id }) };
   }
 
-  deleteAsset(input: AssetIdentifier) {
+  async deleteAsset(input: AssetIdentifier) {
     const parsed = identifierSchema.parse(input);
-    const asset = findAsset(this.db, parsed);
-    this.db.prepare("DELETE FROM assets WHERE id = ?").run(asset.id);
+    const asset = await findAsset(this.db, parsed);
+    await this.db.run("DELETE FROM assets WHERE id = ?", [asset.id]);
     return {
       deleted: true,
       id: asset.id,
@@ -399,14 +397,17 @@ export class WatchlistTools {
     };
   }
 
-  addNote(input: AssetIdentifier & { note: string }) {
+  async addNote(input: AssetIdentifier & { note: string }) {
     const parsed = addNoteSchema.parse(input);
-    const asset = findAsset(this.db, parsed);
+    const asset = await findAsset(this.db, parsed);
     const createdAt = nowIso();
-    const result = this.db
-      .prepare("INSERT INTO notes (assetId, note, createdAt) VALUES (?, ?, ?)")
-      .run(asset.id, parsed.note, createdAt);
-    const note = this.db.prepare("SELECT * FROM notes WHERE id = ?").get(result.lastInsertRowid) as Note;
+    const result = await this.db.run("INSERT INTO notes (assetId, note, createdAt) VALUES (?, ?, ?)", [
+      asset.id,
+      parsed.note,
+      createdAt,
+    ]);
+    const note = await this.db.get<Note>("SELECT * FROM notes WHERE id = ?", [result.lastInsertRowid]);
+    if (!note) throw new Error("Failed to load inserted note.");
     return { note };
   }
 
@@ -423,7 +424,7 @@ export class WatchlistTools {
       params.push(parsed.category);
     }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const assets = this.db.prepare(`SELECT * FROM assets ${where} ORDER BY ticker`).all(...params) as Asset[];
+    const assets = await this.db.all<Asset>(`SELECT * FROM assets ${where} ORDER BY ticker`, params);
     const updated = [];
     const failed = [];
 
@@ -431,14 +432,12 @@ export class WatchlistTools {
       try {
         const price = await this.priceProvider.getPrice(asset.ticker, asset.assetType);
         const timestamp = price.timestamp ?? nowIso();
-        this.db
-          .prepare(
-            `UPDATE assets
+        await this.db.run(
+          `UPDATE assets
              SET currentPrice = ?, currency = ?, priceChange1d = ?, priceChange7d = ?,
                  priceChange30d = ?, lastPriceUpdate = ?, updatedAt = ?
              WHERE id = ?`,
-          )
-          .run(
+          [
             price.price,
             price.currency,
             price.priceChange1d ?? null,
@@ -447,10 +446,15 @@ export class WatchlistTools {
             timestamp,
             nowIso(),
             asset.id,
-          );
-        this.db
-          .prepare("INSERT INTO price_history (assetId, price, currency, source, timestamp) VALUES (?, ?, ?, ?, ?)")
-          .run(asset.id, price.price, price.currency, price.source, timestamp);
+          ],
+        );
+        await this.db.run("INSERT INTO price_history (assetId, price, currency, source, timestamp) VALUES (?, ?, ?, ?, ?)", [
+          asset.id,
+          price.price,
+          price.currency,
+          price.source,
+          timestamp,
+        ]);
         updated.push({ ticker: asset.ticker, price: price.price, currency: price.currency, source: price.source });
       } catch (error) {
         failed.push({ ticker: asset.ticker, error: error instanceof Error ? error.message : String(error) });
@@ -460,31 +464,28 @@ export class WatchlistTools {
     return { updated, failed };
   }
 
-  listReviewDue(input: { beforeDate?: string } = {}) {
+  async listReviewDue(input: { beforeDate?: string } = {}) {
     const parsed = listReviewDueSchema.parse(input);
     const beforeDate = parsed.beforeDate ?? new Date().toISOString().slice(0, 10);
-    const assets = this.db
-      .prepare(
-        `SELECT * FROM assets
+    const assets = await this.db.all<Asset>(
+      `SELECT * FROM assets
          WHERE nextReviewDate IS NULL OR date(nextReviewDate) <= date(?)
          ORDER BY nextReviewDate IS NULL DESC, nextReviewDate ASC, ticker ASC`,
-      )
-      .all(beforeDate) as Asset[];
+      [beforeDate],
+    );
     return { beforeDate, assets };
   }
 
-  portfolioSummary() {
-    const assets = this.db.prepare("SELECT * FROM assets ORDER BY ticker COLLATE NOCASE").all() as Asset[];
-    const due = this.listReviewDue().assets as Asset[];
-    const mockPriceRows = this.db
-      .prepare(
-        `SELECT DISTINCT assets.*
+  async portfolioSummary() {
+    const assets = await this.db.all<Asset>("SELECT * FROM assets ORDER BY ticker COLLATE NOCASE");
+    const due = (await this.listReviewDue()).assets;
+    const mockPriceRows = await this.db.all<Asset>(
+      `SELECT DISTINCT assets.*
          FROM assets
          JOIN price_history ON price_history.assetId = assets.id
          WHERE price_history.source = 'mock'
          ORDER BY assets.ticker COLLATE NOCASE`,
-      )
-      .all() as Asset[];
+    );
     const warnings: string[] = [];
     const missingPrice = assets.filter((asset) => asset.currentPrice == null);
     const highRiskAssets = assets.filter(
@@ -516,12 +517,11 @@ export class WatchlistTools {
     };
   }
 
-  searchAssets(input: { query: string }) {
+  async searchAssets(input: { query: string }) {
     const parsed = searchAssetsSchema.parse(input);
     const query = likeQuery(parsed.query);
-    const assets = this.db
-      .prepare(
-        `SELECT DISTINCT assets.*
+    const assets = await this.db.all<Asset>(
+      `SELECT DISTINCT assets.*
          FROM assets
          LEFT JOIN notes ON notes.assetId = assets.id
          WHERE assets.ticker LIKE ? ESCAPE '\\'
@@ -531,19 +531,18 @@ export class WatchlistTools {
             OR assets.decisionReason LIKE ? ESCAPE '\\'
             OR notes.note LIKE ? ESCAPE '\\'
          ORDER BY assets.ticker COLLATE NOCASE`,
-      )
-      .all(query, query, query, query, query, query) as Asset[];
-    const notes = this.db
-      .prepare(
-        `SELECT notes.*
+      [query, query, query, query, query, query],
+    );
+    const notes = await this.db.all<Note>(
+      `SELECT notes.*
          FROM notes
          JOIN assets ON assets.id = notes.assetId
          WHERE notes.note LIKE ? ESCAPE '\\'
             OR assets.ticker LIKE ? ESCAPE '\\'
             OR assets.name LIKE ? ESCAPE '\\'
          ORDER BY notes.createdAt DESC`,
-      )
-      .all(query, query, query) as Note[];
+      [query, query, query],
+    );
 
     return {
       query: parsed.query,
@@ -553,7 +552,7 @@ export class WatchlistTools {
     };
   }
 
-  setAssetDecision(input: AssetIdentifier & {
+  async setAssetDecision(input: AssetIdentifier & {
     lastDecision: string;
     decisionReason?: string;
     conviction?: string;
@@ -570,50 +569,51 @@ export class WatchlistTools {
     if (parsed.status !== undefined) fields.status = parsed.status;
     if (parsed.nextReviewDate !== undefined) fields.nextReviewDate = parsed.nextReviewDate;
 
-    const updated = this.updateAsset({ id: parsed.id, ticker: parsed.ticker, fields }).asset;
+    const updated = (await this.updateAsset({ id: parsed.id, ticker: parsed.ticker, fields })).asset;
     let note: Note | null = null;
     if (parsed.reviewNote) {
-      note = this.addNote({ id: updated.id, note: `Decision: ${parsed.reviewNote}` }).note;
+      note = (await this.addNote({ id: updated.id, note: `Decision: ${parsed.reviewNote}` })).note;
     }
 
     return {
-      asset: findAsset(this.db, { id: updated.id }),
+      asset: await findAsset(this.db, { id: updated.id }),
       note,
       message: "Decision updated for watchlist analysis only. No trades or broker actions were performed.",
     };
   }
 
-  markReviewDone(input: AssetIdentifier & { reviewNote?: string; nextReviewDate?: string }) {
+  async markReviewDone(input: AssetIdentifier & { reviewNote?: string; nextReviewDate?: string }) {
     const parsed = markReviewDoneSchema.parse(input);
-    const asset = findAsset(this.db, parsed);
+    const asset = await findAsset(this.db, parsed);
     const reviewedAt = nowIso();
     const nextReviewDate =
       parsed.nextReviewDate ?? (asset.reviewFrequencyDays ? addDaysIsoDate(todayIsoDate(), asset.reviewFrequencyDays) : null);
-    this.db
-      .prepare("UPDATE assets SET lastReviewDate = ?, nextReviewDate = ?, updatedAt = ? WHERE id = ?")
-      .run(reviewedAt, nextReviewDate, reviewedAt, asset.id);
+    await this.db.run("UPDATE assets SET lastReviewDate = ?, nextReviewDate = ?, updatedAt = ? WHERE id = ?", [
+      reviewedAt,
+      nextReviewDate,
+      reviewedAt,
+      asset.id,
+    ]);
 
     let note: Note | null = null;
     if (parsed.reviewNote) {
-      note = this.addNote({ id: asset.id, note: `Review: ${parsed.reviewNote}` }).note;
+      note = (await this.addNote({ id: asset.id, note: `Review: ${parsed.reviewNote}` })).note;
     }
 
-    return { asset: findAsset(this.db, { id: asset.id }), note };
+    return { asset: await findAsset(this.db, { id: asset.id }), note };
   }
 
-  showBuyZone() {
-    const assets = this.db
-      .prepare("SELECT * FROM assets WHERE status = 'buy_zone' OR buyZone IS NOT NULL ORDER BY ticker")
-      .all() as Asset[];
+  async showBuyZone() {
+    const assets = await this.db.all<Asset>("SELECT * FROM assets WHERE status = 'buy_zone' OR buyZone IS NOT NULL ORDER BY ticker");
     return { assets };
   }
 
-  showLeapsCandidates() {
+  async showLeapsCandidates() {
     return this.listWatchlist({ category: "LEAPS candidates" });
   }
 
-  exportWatchlistMarkdown() {
-    const rows = this.listWatchlist({ sortBy: "ticker" }).assets;
+  async exportWatchlistMarkdown() {
+    const rows = (await this.listWatchlist({ sortBy: "ticker" })).assets;
     const header =
       "| Ticker | Name | Category | Status | Conviction | Price | Target Buy | Target Sell | Next Review | Thesis Score | Risk Score | Last Decision | Thesis |";
     const separator = "|---|---|---|---|---:|---:|---:|---:|---|---:|---:|---|---|";
@@ -637,8 +637,8 @@ export class WatchlistTools {
     return { markdown: [header, separator, ...body.map((row) => `| ${row} |`)].join("\n") };
   }
 
-  exportWatchlistCsv() {
-    const rows = this.listWatchlist({ sortBy: "ticker" }).assets;
+  async exportWatchlistCsv() {
+    const rows = (await this.listWatchlist({ sortBy: "ticker" })).assets;
     const escape = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
     const header = [
       "ticker",
@@ -683,13 +683,13 @@ export class WatchlistTools {
     return { csv: [header.join(","), ...csvRows].join("\n") };
   }
 
-  exportWatchlistJson() {
-    return { backup: exportWatchlistBackup(this.db) };
+  async exportWatchlistJson() {
+    return { backup: await exportWatchlistBackup(this.db) };
   }
 
-  importWatchlistJson(input: { backup: unknown; dryRun?: boolean; mode?: RestoreMode }) {
+  async importWatchlistJson(input: { backup: unknown; dryRun?: boolean; mode?: RestoreMode }) {
     const parsed = importWatchlistJsonSchema.parse(input);
-    const summary = importWatchlistBackup(this.db, parsed.backup, {
+    const summary = await importWatchlistBackup(this.db, parsed.backup, {
       dryRun: parsed.dryRun ?? false,
       mode: parsed.mode ?? "upsert",
     });

@@ -57,7 +57,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
       },
       annotations: { readOnlyHint: true },
     },
-    async (input) => asMcpResponse(tools.listWatchlist(input as ListWatchlistInput)),
+    async (input) => asMcpResponse(await tools.listWatchlist(input as ListWatchlistInput)),
   );
 
   server.registerTool(
@@ -68,7 +68,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
       inputSchema: { id: z.number().optional(), ticker: z.string().optional() },
       annotations: { readOnlyHint: true },
     },
-    async (input) => asMcpResponse(tools.getAsset(input as AssetIdentifier)),
+    async (input) => asMcpResponse(await tools.getAsset(input as AssetIdentifier)),
   );
 
   server.registerTool(
@@ -98,7 +98,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
         decisionReason: z.string().optional(),
       },
     },
-    async (input) => asMcpResponse(tools.addAsset(input as AddAssetInput)),
+    async (input) => asMcpResponse(await tools.addAsset(input as AddAssetInput)),
   );
 
   server.registerTool(
@@ -141,7 +141,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
           .strict(),
       },
     },
-    async (input) => asMcpResponse(tools.updateAsset(input as AssetIdentifier & { fields: UpdateAssetFields })),
+    async (input) => asMcpResponse(await tools.updateAsset(input as AssetIdentifier & { fields: UpdateAssetFields })),
   );
 
   server.registerTool(
@@ -153,7 +153,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
       inputSchema: { id: z.number().optional(), ticker: z.string().optional() },
       annotations: { destructiveHint: true },
     },
-    async (input) => asMcpResponse(tools.deleteAsset(input as AssetIdentifier)),
+    async (input) => asMcpResponse(await tools.deleteAsset(input as AssetIdentifier)),
   );
 
   server.registerTool(
@@ -163,7 +163,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
       description: "Write tool. Add a research note to a watchlist asset by ticker or id.",
       inputSchema: { id: z.number().optional(), ticker: z.string().optional(), note: z.string() },
     },
-    async (input) => asMcpResponse(tools.addNote(input as AssetIdentifier & { note: string })),
+    async (input) => asMcpResponse(await tools.addNote(input as AssetIdentifier & { note: string })),
   );
 
   server.registerTool(
@@ -185,7 +185,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
       inputSchema: { beforeDate: z.string().optional() },
       annotations: { readOnlyHint: true },
     },
-    async (input) => asMcpResponse(tools.listReviewDue(input)),
+    async (input) => asMcpResponse(await tools.listReviewDue(input)),
   );
 
   server.registerTool(
@@ -201,7 +201,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
       },
     },
     async (input) =>
-      asMcpResponse(tools.markReviewDone(input as AssetIdentifier & { reviewNote?: string; nextReviewDate?: string })),
+      asMcpResponse(await tools.markReviewDone(input as AssetIdentifier & { reviewNote?: string; nextReviewDate?: string })),
   );
 
   server.registerTool(
@@ -213,7 +213,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
-    async () => asMcpResponse(tools.portfolioSummary()),
+    async () => asMcpResponse(await tools.portfolioSummary()),
   );
 
   server.registerTool(
@@ -224,7 +224,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
       inputSchema: { query: z.string() },
       annotations: { readOnlyHint: true },
     },
-    async (input) => asMcpResponse(tools.searchAssets(input as { query: string })),
+    async (input) => asMcpResponse(await tools.searchAssets(input as { query: string })),
   );
 
   server.registerTool(
@@ -246,7 +246,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
     },
     async (input) =>
       asMcpResponse(
-        tools.setAssetDecision(
+        await tools.setAssetDecision(
           input as AssetIdentifier & {
             lastDecision: string;
             decisionReason?: string;
@@ -267,7 +267,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
-    async () => asMcpResponse(tools.showBuyZone()),
+    async () => asMcpResponse(await tools.showBuyZone()),
   );
 
   server.registerTool(
@@ -278,7 +278,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
-    async () => asMcpResponse(tools.showLeapsCandidates()),
+    async () => asMcpResponse(await tools.showLeapsCandidates()),
   );
 
   server.registerTool(
@@ -289,7 +289,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
-    async () => asMcpResponse(tools.exportWatchlistMarkdown()),
+    async () => asMcpResponse(await tools.exportWatchlistMarkdown()),
   );
 
   server.registerTool(
@@ -300,7 +300,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
-    async () => asMcpResponse(tools.exportWatchlistCsv()),
+    async () => asMcpResponse(await tools.exportWatchlistCsv()),
   );
 
   server.registerTool(
@@ -311,7 +311,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
-    async () => asMcpResponse(tools.exportWatchlistJson()),
+    async () => asMcpResponse(await tools.exportWatchlistJson()),
   );
 
   server.registerTool(
@@ -329,7 +329,7 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
     },
     async (input) =>
       asMcpResponse(
-        tools.importWatchlistJson(
+        await tools.importWatchlistJson(
           input as {
             backup: unknown;
             dryRun?: boolean;

@@ -21,11 +21,11 @@ if (restoreMode === "replace_all" && process.env.RESTORE_MODE !== "replace_all")
 const resolvedBackupPath = path.resolve(backupPath);
 const backup = JSON.parse(fs.readFileSync(resolvedBackupPath, "utf8")) as unknown;
 const db = createDb();
-initializeDatabase(db);
+await initializeDatabase(db);
 
 try {
-  const summary = importWatchlistBackup(db, backup, { mode: restoreMode });
+  const summary = await importWatchlistBackup(db, backup, { mode: restoreMode });
   console.log(JSON.stringify({ restoredFrom: resolvedBackupPath, summary }, null, 2));
 } finally {
-  db.close();
+  await db.close();
 }

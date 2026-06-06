@@ -42,8 +42,8 @@ class StubCoinGeckoProvider implements PriceProvider {
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "invest-watchlist-"));
 const dbPath = path.join(tempDir, "verify.sqlite");
 const db = createDb(dbPath);
-initializeDatabase(db);
-const columns = db.prepare("PRAGMA table_info(assets)").all() as Array<{ name: string }>;
+await initializeDatabase(db);
+const columns = await db.all<{ name: string }>("PRAGMA table_info(assets)");
 for (const column of [
   "targetBuyPrice",
   "targetSellPrice",
@@ -67,7 +67,7 @@ assert(
   `Expected registered MCP tools to match: ${expectedToolNames.join(", ")}`,
 );
 
-tools.addAsset({
+await tools.addAsset({
   ticker: "MSFT",
   name: "Microsoft",
   assetType: "stock",
@@ -79,7 +79,7 @@ tools.addAsset({
   thesisScore: 8,
   riskScore: 4,
 });
-tools.addAsset({
+await tools.addAsset({
   ticker: "META",
   name: "Meta Platforms",
   assetType: "stock",
@@ -87,7 +87,7 @@ tools.addAsset({
   broker: "XTB",
   conviction: "A-",
 });
-tools.addAsset({
+await tools.addAsset({
   ticker: "BTC",
   name: "Bitcoin",
   assetType: "crypto",
@@ -97,7 +97,7 @@ tools.addAsset({
   thesisScore: 9,
   riskScore: 7,
 });
-tools.addAsset({
+await tools.addAsset({
   ticker: "SPCE",
   name: "Virgin Galactic",
   assetType: "stock",
@@ -106,7 +106,7 @@ tools.addAsset({
   mainRisk: "high dilution / hype risk",
 });
 
-const seededList = tools.listWatchlist();
+const seededList = await tools.listWatchlist();
 assert(seededList.assets.length === 4, "Expected four seeded assets.");
 assert(seededList.columns.some((column) => column.key === "targetBuyPrice"), "Expected UI columns metadata.");
 assert(seededList.summary.byCategory["LEAPS candidates"] === 2, "Expected category summary counts.");
@@ -114,7 +114,7 @@ assert(seededList.summary.byStatus.watching === 4, "Expected status summary coun
 assert(seededList.priceProviderMode === "mock", "Expected list response to expose price provider mode.");
 assert(seededList.generatedAt, "Expected list response to include generatedAt.");
 
-tools.addAsset({
+await tools.addAsset({
   ticker: "TEST",
   name: 'Test "Asset"',
   assetType: "stock",
@@ -129,15 +129,15 @@ tools.addAsset({
   lastDecision: "watch",
   decisionReason: "Verification path.",
 });
-tools.updateAsset({
+await tools.updateAsset({
   ticker: "TEST",
   fields: { status: "needs_review", thesis: "Verification asset with | pipe.", targetBuyPrice: 11, lastDecision: "reviewed" },
 });
-tools.addNote({ ticker: "TEST", note: "Verification note." });
-const reviewed = tools.markReviewDone({ ticker: "TEST", reviewNote: "Looks fine." });
+await tools.addNote({ ticker: "TEST", note: "Verification note." });
+const reviewed = await tools.markReviewDone({ ticker: "TEST", reviewNote: "Looks fine." });
 assert(reviewed.asset.nextReviewDate === todayPlusDays(21), "Expected automatic nextReviewDate from reviewFrequencyDays.");
 assert(reviewed.note?.note === "Review: Looks fine.", "Expected review note to be added.");
-const decision = tools.setAssetDecision({
+const decision = await tools.setAssetDecision({
   ticker: "TEST",
   lastDecision: "keep watching",
   decisionReason: "Verification decision.",
@@ -148,13 +148,13 @@ const decision = tools.setAssetDecision({
 assert(decision.asset.lastDecision === "keep watching", "Expected set_asset_decision to update lastDecision.");
 assert(decision.asset.decisionReason === "Verification decision.", "Expected set_asset_decision to update decisionReason.");
 assert(decision.note?.note === "Decision: Decision helper note.", "Expected set_asset_decision to add optional note.");
-const detail = tools.getAsset({ ticker: "TEST" });
+const detail = await tools.getAsset({ ticker: "TEST" });
 assert(detail.displaySections.some((section) => section.key === "analysis"), "Expected detail display section metadata.");
 assert(detail.asset.targetBuyPrice === 11, "Expected updated targetBuyPrice.");
 assert(detail.asset.lastDecision === "keep watching", "Expected updated lastDecision.");
 let rejectedUnknownField = false;
 try {
-  tools.updateAsset({ ticker: "TEST", fields: { unknownField: "nope" } as never });
+  await tools.updateAsset({ ticker: "TEST", fields: { unknownField: "nope" } as never });
 } catch {
   rejectedUnknownField = true;
 }
@@ -162,43 +162,43 @@ assert(rejectedUnknownField, "Expected unknown update fields to be rejected.");
 const refreshResult = await tools.refreshPrices({ ticker: "TEST" });
 assert(refreshResult.updated.length === 1, "Expected TEST price refresh.");
 assert(refreshResult.updated[0]?.source === "mock", "Expected mock provider for PRICE_PROVIDER=mock.");
-const summary = tools.portfolioSummary();
+const summary = await tools.portfolioSummary();
 assert(summary.totalAssets === 5, "Expected portfolio summary to include five assets before delete.");
 assert(summary.countsByAssetType.stock >= 4, "Expected portfolio summary counts by asset type.");
 assert(summary.assetsWithMockPrices.some((asset) => asset.ticker === "TEST"), "Expected portfolio summary mock price assets.");
-const searchResult = tools.searchAssets({ query: "Verification" });
+const searchResult = await tools.searchAssets({ query: "Verification" });
 assert(searchResult.matchingAssets.some((asset) => asset.ticker === "TEST"), "Expected search_assets to find TEST asset.");
 assert(searchResult.matchingNotes.some((note) => note.note.includes("Verification")), "Expected search_assets to find matching notes.");
-const markdown = tools.exportWatchlistMarkdown().markdown;
+const markdown = (await tools.exportWatchlistMarkdown()).markdown;
 assert(markdown.includes("| TEST |"), "Markdown export should include TEST.");
 assert(markdown.includes("Verification asset with \\| pipe."), "Markdown export should escape pipe characters.");
-const csv = tools.exportWatchlistCsv().csv;
+const csv = (await tools.exportWatchlistCsv()).csv;
 assert(csv.includes('"TEST"'), "CSV export should include TEST.");
 assert(csv.includes('"Test ""Asset"""'), "CSV export should escape quotes.");
-const exportedBackup = tools.exportWatchlistJson().backup;
+const exportedBackup = (await tools.exportWatchlistJson()).backup;
 assert(exportedBackup.version === 1, "Expected export_watchlist_json backup version.");
 assert(exportedBackup.assets.some((asset) => asset.ticker === "TEST"), "Expected exported backup to include TEST.");
-const dryRunImport = tools.importWatchlistJson({ backup: exportedBackup, dryRun: true, mode: "upsert" });
+const dryRunImport = await tools.importWatchlistJson({ backup: exportedBackup, dryRun: true, mode: "upsert" });
 assert(dryRunImport.summary.dryRun, "Expected import_watchlist_json dryRun summary.");
-const helperBackup = exportWatchlistBackup(db);
+const helperBackup = await exportWatchlistBackup(db);
 assert(helperBackup.assets.length >= 5, "Expected helper backup to export assets.");
 
 const restoreDbPath = path.join(tempDir, "restore.sqlite");
 const restoreDb = createDb(restoreDbPath);
-initializeDatabase(restoreDb);
-const dryRunHelper = importWatchlistBackup(restoreDb, helperBackup, { dryRun: true, mode: "upsert" });
+await initializeDatabase(restoreDb);
+const dryRunHelper = await importWatchlistBackup(restoreDb, helperBackup, { dryRun: true, mode: "upsert" });
 assert(dryRunHelper.assetsCreated >= 5, "Expected helper dryRun to plan asset creation.");
-const importedHelper = importWatchlistBackup(restoreDb, helperBackup, { mode: "upsert" });
+const importedHelper = await importWatchlistBackup(restoreDb, helperBackup, { mode: "upsert" });
 assert(importedHelper.assetsCreated >= 5, "Expected helper upsert to create assets.");
 const restoredTools = new WatchlistTools(restoreDb, createPriceProvider({ mode: "mock" }), "mock");
-assert(restoredTools.getAsset({ ticker: "TEST" }).asset.ticker === "TEST", "Expected restored DB to contain TEST.");
-const toolImport = restoredTools.importWatchlistJson({ backup: exportedBackup, mode: "upsert" });
+assert((await restoredTools.getAsset({ ticker: "TEST" })).asset.ticker === "TEST", "Expected restored DB to contain TEST.");
+const toolImport = await restoredTools.importWatchlistJson({ backup: exportedBackup, mode: "upsert" });
 assert(toolImport.summary.assetsUpdated >= 5, "Expected import_watchlist_json upsert to update existing assets.");
-restoreDb.close();
-const deleted = tools.deleteAsset({ ticker: "TEST" });
+await restoreDb.close();
+const deleted = await tools.deleteAsset({ ticker: "TEST" });
 assert(deleted.deleted, "Expected delete confirmation.");
-assert(tools.showLeapsCandidates().assets.length === 2, "Expected two LEAPS candidates.");
-assert(tools.listReviewDue({ beforeDate: "2026-06-01" }).assets.length >= 4, "Expected review due result.");
+assert((await tools.showLeapsCandidates()).assets.length === 2, "Expected two LEAPS candidates.");
+assert((await tools.listReviewDue({ beforeDate: "2026-06-01" })).assets.length >= 4, "Expected review due result.");
 
 const mockProvider = createPriceProvider({ mode: "mock" });
 const mockBtc = await mockProvider.getPrice("BTC", "crypto");
@@ -214,5 +214,5 @@ assert(hybridBtc.source === "stub-coingecko", "Expected BTC to use CoinGecko pro
 const hybridMsft = await hybridProvider.getPrice("MSFT", "stock");
 assert(hybridMsft.source === "mock", "Expected stocks to use mock provider in hybrid mode.");
 
-db.close();
+await db.close();
 console.log("Verification passed.");

@@ -4,7 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import dotenv from "dotenv";
 import fs from "node:fs";
 import path from "node:path";
-import { createDb, getDatabasePath } from "./db/client.js";
+import { createDb, getDatabasePath, getDbProvider } from "./db/client.js";
 import { initializeDatabase } from "./db/schema.js";
 import { createInvestWatchlistMcpServer } from "./mcp/createServer.js";
 import { createPriceProvider, getPriceProviderMode } from "./prices/providerFactory.js";
@@ -26,14 +26,18 @@ function readPackageVersion(): string {
 }
 
 function safeDatabaseConfig(): string {
+  if (getDbProvider() === "turso") {
+    return process.env.TURSO_DATABASE_URL ? "turso configured" : "turso missing url";
+  }
+
   const configuredPath = getDatabasePath();
   if (!configuredPath) return "default";
   return path.basename(configuredPath) || "configured";
 }
 
-function createRequestScopedServer(): { server: McpServer; close: () => void } {
+async function createRequestScopedServer(): Promise<{ server: McpServer; close: () => Promise<void> }> {
   const db = createDb();
-  initializeDatabase(db);
+  await initializeDatabase(db);
   const priceProviderMode = getPriceProviderMode();
   const tools = new WatchlistTools(db, createPriceProvider({ mode: priceProviderMode }), priceProviderMode);
   const server = createInvestWatchlistMcpServer({ tools, priceProviderMode });
@@ -67,6 +71,7 @@ app.get("/version", (_req: HttpRequest, res: HttpResponse) => {
     nodeEnv: process.env.NODE_ENV ?? "development",
     priceProviderMode: getPriceProviderMode(),
     authEnabled: Boolean(connectorApiKey),
+    dbProvider: getDbProvider(),
     database: safeDatabaseConfig(),
   });
 });
@@ -95,7 +100,7 @@ app.use("/mcp", (req: HttpRequest, res: HttpResponse, next: NextFunction) => {
 });
 
 app.post("/mcp", async (req: HttpRequest, res: HttpResponse) => {
-  const { server, close } = createRequestScopedServer();
+  const { server, close } = await createRequestScopedServer();
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
   });
@@ -118,7 +123,7 @@ app.post("/mcp", async (req: HttpRequest, res: HttpResponse) => {
   } finally {
     await transport.close().catch((error) => console.error("Error closing MCP transport:", error));
     await server.close().catch((error) => console.error("Error closing MCP server:", error));
-    close();
+    await close();
   }
 });
 

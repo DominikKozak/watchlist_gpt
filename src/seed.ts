@@ -4,7 +4,7 @@ import { MockPriceProvider } from "./prices/mockPriceProvider.js";
 import { WatchlistTools } from "./tools/watchlistTools.js";
 
 const db = createDb();
-initializeDatabase(db);
+await initializeDatabase(db);
 const tools = new WatchlistTools(db, new MockPriceProvider(), "mock");
 
 const seedAssets = [
@@ -65,14 +65,14 @@ const seedAssets = [
 ];
 
 for (const asset of seedAssets) {
-  const existing = db.prepare("SELECT id FROM assets WHERE ticker = ? COLLATE NOCASE").get(asset.ticker);
+  const existing = await db.get("SELECT id FROM assets WHERE ticker = ? COLLATE NOCASE", [asset.ticker]);
   if (existing) {
-    tools.updateAsset({ ticker: asset.ticker, fields: asset });
+    await tools.updateAsset({ ticker: asset.ticker, fields: asset });
   } else {
-    tools.addAsset(asset);
+    await tools.addAsset(asset);
   }
 }
 
 await tools.refreshPrices();
-db.close();
+await db.close();
 console.log(`Seeded ${seedAssets.length} assets.`);

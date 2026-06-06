@@ -9,7 +9,7 @@ import { WatchlistTools } from "./tools/watchlistTools.js";
 dotenv.config();
 
 const db = createDb();
-initializeDatabase(db);
+await initializeDatabase(db);
 
 const priceProviderMode = getPriceProviderMode();
 const tools = new WatchlistTools(db, createPriceProvider({ mode: priceProviderMode }), priceProviderMode);

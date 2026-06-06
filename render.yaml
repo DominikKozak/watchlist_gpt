@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: invest-watchlist-mcp
+    runtime: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HTTP_HOST
+        value: 0.0.0.0
+      - key: HTTP_PORT
+        value: 3000
+      - key: DB_PROVIDER
+        value: turso
+      - key: PRICE_PROVIDER
+        value: hybrid
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
+      - key: CONNECTOR_API_KEY
+        sync: false
+      - key: COINGECKO_API_KEY
+        sync: false
+      - key: STOCK_API_KEY
+        sync: false

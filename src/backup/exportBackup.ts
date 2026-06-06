@@ -1,11 +1,11 @@
-import type Database from "better-sqlite3";
 import { BACKUP_VERSION, type WatchlistBackup } from "./backupFormat.js";
+import type { AppDb } from "../db/client.js";
 import type { Asset, Note, PriceHistory } from "../types.js";
 
-export function exportWatchlistBackup(db: Database.Database): WatchlistBackup {
-  const assets = db.prepare("SELECT * FROM assets ORDER BY ticker COLLATE NOCASE").all() as Asset[];
-  const notes = db.prepare("SELECT * FROM notes ORDER BY id").all() as Note[];
-  const priceHistory = db.prepare("SELECT * FROM price_history ORDER BY id").all() as PriceHistory[];
+export async function exportWatchlistBackup(db: AppDb): Promise<WatchlistBackup> {
+  const assets = await db.all<Asset>("SELECT * FROM assets ORDER BY ticker COLLATE NOCASE");
+  const notes = await db.all<Note>("SELECT * FROM notes ORDER BY id");
+  const priceHistory = await db.all<PriceHistory>("SELECT * FROM price_history ORDER BY id");
 
   return {
     version: BACKUP_VERSION,

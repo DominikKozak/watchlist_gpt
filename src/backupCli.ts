@@ -12,15 +12,15 @@ function timestampForFilename(): string {
 }
 
 const db = createDb();
-initializeDatabase(db);
+await initializeDatabase(db);
 
 try {
-  const backup = exportWatchlistBackup(db);
+  const backup = await exportWatchlistBackup(db);
   const backupDir = path.resolve("backups");
   fs.mkdirSync(backupDir, { recursive: true });
   const backupPath = path.join(backupDir, `watchlist-${timestampForFilename()}.json`);
   fs.writeFileSync(backupPath, JSON.stringify(backup, null, 2));
   console.log(`Backup written to ${backupPath}`);
 } finally {
-  db.close();
+  await db.close();
 }

@@ -1,6 +1,5 @@
-import type Database from "better-sqlite3";
 import { pathToFileURL } from "node:url";
-import { createDb } from "./client.js";
+import { createDb, type AppDb } from "./client.js";
 
 const assetMigrations = [
   { name: "targetBuyPrice", definition: "REAL" },
@@ -12,15 +11,15 @@ const assetMigrations = [
   { name: "decisionReason", definition: "TEXT" },
 ] as const;
 
-function ensureColumn(db: Database.Database, tableName: string, columnName: string, definition: string): void {
-  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+async function ensureColumn(db: AppDb, tableName: string, columnName: string, definition: string): Promise<void> {
+  const columns = await db.all<{ name: string }>(`PRAGMA table_info(${tableName})`);
   if (!columns.some((column) => column.name === columnName)) {
-    db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`).run();
+    await db.run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
   }
 }
 
-export function initializeDatabase(db: Database.Database): void {
-  db.exec(`
+export async function initializeDatabase(db: AppDb): Promise<void> {
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS assets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       ticker TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -78,13 +77,13 @@ export function initializeDatabase(db: Database.Database): void {
   `);
 
   for (const migration of assetMigrations) {
-    ensureColumn(db, "assets", migration.name, migration.definition);
+    await ensureColumn(db, "assets", migration.name, migration.definition);
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const db = createDb();
-  initializeDatabase(db);
-  db.close();
+  await initializeDatabase(db);
+  await db.close();
   console.log("Database initialized.");
 }
