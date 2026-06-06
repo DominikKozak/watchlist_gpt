@@ -10,6 +10,7 @@ It is intentionally **not** a trading system. It never places trades, never conn
 
 - Local stdio MCP entrypoint in `src/server.ts`.
 - Hosted/stateless Streamable HTTP MCP endpoint at `POST /mcp` in `src/httpServer.ts`.
+- Simple web UI at `GET /` with a watchlist table and JSON data at `GET /api/watchlist`.
 - Shared MCP server and tool registration in `src/mcp/createServer.ts`.
 - Optional bearer-token protection for HTTP with `CONNECTOR_API_KEY`.
 - Public unauthenticated `GET /health` and `GET /version` operational endpoints.
@@ -17,10 +18,12 @@ It is intentionally **not** a trading system. It never places trades, never conn
 - SQLite schema with safe backwards-compatible column migration.
 - Watchlist tools for listing, detail, add, update, delete, notes, review workflow, portfolio summary, search, decision tracking, price refresh, buy-zone view, LEAPS view, and Markdown/CSV/JSON export.
 - UI-ready list and detail responses for future Apps SDK rendering.
+- ChatGPT Apps SDK watchlist table resource for in-chat UI.
 - Dockerfile for hosted HTTP deployment.
 - Optional Turso/libSQL database provider for free hosted deployments.
 - Render blueprint for a free web service backed by Turso.
 - Runtime price provider routing with `mock`, `coingecko`, and `hybrid`.
+- Live stock/ETF quotes via Finnhub when `STOCK_API_KEY` is configured.
 - Verification scripts for core tool behavior and HTTP bearer smoke testing.
 
 ## Not Implemented
@@ -29,7 +32,7 @@ It is intentionally **not** a trading system. It never places trades, never conn
 - Trade execution.
 - Buy/sell order tools.
 - Broker credential storage.
-- Real stock/ETF quote provider.
+- Real live options quote provider.
 - OAuth or production identity integration.
 - Full Apps SDK frontend component.
 
@@ -61,7 +64,7 @@ TURSO_AUTH_TOKEN=
 PRICE_PROVIDER=mock
 COINGECKO_API_KEY=
 STOCK_API_KEY=
-STOCK_API_PROVIDER=
+STOCK_API_PROVIDER=finnhub
 HTTP_HOST=127.0.0.1
 HTTP_PORT=3000
 CONNECTOR_API_KEY=
@@ -160,6 +163,20 @@ Default URL:
 ```text
 http://127.0.0.1:3000/mcp
 ```
+
+The same HTTP server also exposes a simple browser UI for local review:
+
+```text
+http://127.0.0.1:3000/
+```
+
+The backing JSON payload is available at:
+
+```text
+http://127.0.0.1:3000/api/watchlist
+```
+
+When `CONNECTOR_API_KEY` is set, both UI endpoints require the same `Authorization: Bearer <CONNECTOR_API_KEY>` header as `/mcp`.
 
 Configure with `HTTP_HOST` and `HTTP_PORT`.
 
@@ -275,7 +292,7 @@ The tool descriptions are written so ChatGPT can map phrases like:
 - `priceProviderMode`
 - `warnings`
 
-This is enough for ChatGPT to present tables now and for a future Apps SDK component to consume later. There is no full React UI yet.
+This is enough for ChatGPT to present tables now, and the repo also exposes a ChatGPT Apps SDK watchlist table resource for an in-chat UI. The local HTTP preview page still exists for debugging, but it is no longer the primary UI path.
 
 ## Analysis Fields
 
@@ -301,15 +318,21 @@ If `reviewNote` is provided, the tool also adds a note prefixed with `Review:`.
 
 ## Price Providers
 
-`PRICE_PROVIDER=mock` uses deterministic fake prices for every asset type. This is the MVP default.
+`PRICE_PROVIDER=mock` uses deterministic fake prices for every asset type. This is the local MVP default.
 
 `PRICE_PROVIDER=coingecko` uses `CoinGeckoProvider` for mapped crypto assets such as BTC. Non-crypto assets return a clear per-ticker failure during refresh.
 
-`PRICE_PROVIDER=hybrid` routes crypto to CoinGecko and stocks, ETFs, options, CFDs, and note-only assets to mock prices.
+`PRICE_PROVIDER=hybrid` routes:
+
+- crypto to CoinGecko
+- stock and ETF assets to `StockProvider`
+- option, CFD, and note-only assets to mock fallback
 
 `COINGECKO_API_KEY` is optional and used only when present. Prices may be delayed, estimated, missing, or mock-only depending on provider mode.
 
-`StockProvider` remains a documented TODO for Alpha Vantage, Finnhub, or another provider using `STOCK_API_PROVIDER` and `STOCK_API_KEY`. Real stock/ETF quotes are not implemented yet.
+`StockProvider` now supports `STOCK_API_PROVIDER=finnhub`. When `STOCK_API_KEY` is configured, stock and ETF assets can refresh with live Finnhub quotes. If `STOCK_API_KEY` is missing, hybrid mode falls back to mock prices for stock and ETF assets so local development still works.
+
+Important limitation: live options pricing is still not implemented. Option candidates in the watchlist are still analysis items, not broker-backed live option quotes.
 
 `refresh_prices` keeps partial-failure behavior. If one ticker fails, the tool reports it in `failed` and continues refreshing the rest.
 
@@ -404,6 +427,7 @@ CONNECTOR_API_KEY=long-random-private-token
 HTTP_HOST=0.0.0.0
 HTTP_PORT=3000
 PRICE_PROVIDER=hybrid
+STOCK_API_PROVIDER=finnhub
 ```
 
 After deploy, verify:
@@ -450,14 +474,13 @@ For private hosted connector testing:
 6. Put the app behind HTTPS. Private ChatGPT connector flows generally require HTTPS, not a plain local HTTP URL.
 7. Point the private connector configuration at `https://your-host.example/mcp`.
 8. Keep bearer auth for private testing, then replace or layer it with the auth required by your connector deployment model.
-9. Add an Apps SDK UI component later if you want a custom table/detail experience.
+9. The Apps SDK watchlist table resource is already wired in; use it as the custom table experience in ChatGPT.
 
 ## Future TODO
 
 - HTTPS hosting configuration.
 - Production-grade auth/OAuth for the private connector flow.
-- Apps SDK UI resource for compact table and detail views.
-- Real stock/ETF quote provider behind `STOCK_API_PROVIDER` and `STOCK_API_KEY`.
+- Real options pricing provider.
 - Optional LEAPS/options-specific fields and calculations.
 - Hosted volume/backup retention policy.
 

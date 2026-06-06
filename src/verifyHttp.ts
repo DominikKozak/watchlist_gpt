@@ -58,6 +58,28 @@ try {
   assert(!versionText.includes(dbPath), "Expected /version not to expose full database path.");
   assert(!versionText.includes(apiKey), "Expected /version not to expose bearer token.");
 
+  const unauthorizedUi = await fetch(`http://127.0.0.1:${port}/`);
+  assert(unauthorizedUi.status === 401, "Expected / to require auth when CONNECTOR_API_KEY is set.");
+
+  const authorizedUi = await fetch(`http://127.0.0.1:${port}/`, {
+    headers: { authorization: `Bearer ${apiKey}` },
+  });
+  const authorizedUiBody = await authorizedUi.text();
+  assert(authorizedUi.status === 200, "Expected authorized / to return 200.");
+  assert(authorizedUiBody.includes("<h1>Watchlist</h1>"), "Expected authorized / to render the watchlist UI.");
+  assert(authorizedUiBody.includes("Watchlist je zatim prazdny."), "Expected empty UI state for a fresh database.");
+
+  const unauthorizedApi = await fetch(`http://127.0.0.1:${port}/api/watchlist`);
+  assert(unauthorizedApi.status === 401, "Expected /api/watchlist to require auth when CONNECTOR_API_KEY is set.");
+
+  const authorizedApi = await fetch(`http://127.0.0.1:${port}/api/watchlist`, {
+    headers: { authorization: `Bearer ${apiKey}` },
+  });
+  const authorizedApiBody = (await authorizedApi.json()) as { summary?: { total?: number }; assets?: unknown[] };
+  assert(authorizedApi.status === 200, "Expected authorized /api/watchlist to return 200.");
+  assert(authorizedApiBody.summary?.total === 0, "Expected fresh API watchlist to report zero assets.");
+  assert(Array.isArray(authorizedApiBody.assets), "Expected API watchlist to include an assets array.");
+
   const unauthorized = await fetch(url, {
     method: "POST",
     headers: {

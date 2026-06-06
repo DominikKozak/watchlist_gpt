@@ -9,6 +9,7 @@ import { initializeDatabase } from "./db/schema.js";
 import { createInvestWatchlistMcpServer } from "./mcp/createServer.js";
 import { createPriceProvider, getPriceProviderMode } from "./prices/providerFactory.js";
 import { WatchlistTools } from "./tools/watchlistTools.js";
+import { renderWatchlistHtml } from "./ui/watchlistHtml.js";
 
 dotenv.config();
 
@@ -48,12 +49,68 @@ async function createRequestScopedServer(): Promise<{ server: McpServer; close: 
   };
 }
 
+async function createRequestScopedTools(): Promise<{ tools: WatchlistTools; close: () => Promise<void> }> {
+  const db = createDb();
+  await initializeDatabase(db);
+  const priceProviderMode = getPriceProviderMode();
+  return {
+    tools: new WatchlistTools(db, createPriceProvider({ mode: priceProviderMode }), priceProviderMode),
+    close: () => db.close(),
+  };
+}
+
+function readBearer(req: HttpRequest): string | null {
+  const authorization = req.headers.authorization;
+  const header = Array.isArray(authorization) ? authorization[0] : authorization;
+  return header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
+}
+
+function rejectUnauthorized(res: HttpResponse): void {
+  res.status(401).json({
+    error: "Unauthorized. Provide Authorization: Bearer <CONNECTOR_API_KEY>.",
+  });
+}
+
+function requireConnectorAuth(req: HttpRequest, res: HttpResponse, next: NextFunction): void {
+  if (!connectorApiKey || readBearer(req) === connectorApiKey) {
+    next();
+    return;
+  }
+
+  rejectUnauthorized(res);
+}
+
 const host = process.env.HTTP_HOST ?? "127.0.0.1";
 const port = Number(process.env.HTTP_PORT ?? 3000);
 const connectorApiKey = process.env.CONNECTOR_API_KEY?.trim();
 const appName = "Invest Watchlist";
 const appVersion = readPackageVersion();
 const app = createMcpExpressApp({ host });
+
+app.get("/", requireConnectorAuth, async (_req: HttpRequest, res: HttpResponse) => {
+  const { tools, close } = await createRequestScopedTools();
+  try {
+    const view = await tools.listWatchlist({ sortBy: "ticker" });
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(renderWatchlistHtml(view));
+  } catch (error) {
+    console.error("Error rendering watchlist UI:", error);
+    res.status(500).json({ error: "Failed to render watchlist UI." });
+  } finally {
+    await close();
+  }
+});
+
+app.get("/api/watchlist", requireConnectorAuth, async (_req: HttpRequest, res: HttpResponse) => {
+  const { tools, close } = await createRequestScopedTools();
+  try {
+    res.json(await tools.listWatchlist({ sortBy: "ticker" }));
+  } catch (error) {
+    console.error("Error loading watchlist API:", error);
+    res.status(500).json({ error: "Failed to load watchlist." });
+  } finally {
+    await close();
+  }
+});
 
 app.get("/health", (_req: HttpRequest, res: HttpResponse) => {
   res.json({
@@ -82,9 +139,7 @@ app.use("/mcp", (req: HttpRequest, res: HttpResponse, next: NextFunction) => {
     return;
   }
 
-  const authorization = req.headers.authorization;
-  const header = Array.isArray(authorization) ? authorization[0] : authorization;
-  if (header === `Bearer ${connectorApiKey}`) {
+  if (readBearer(req) === connectorApiKey) {
     next();
     return;
   }

@@ -39,6 +39,23 @@ class StubCoinGeckoProvider implements PriceProvider {
   }
 }
 
+class StubStockProvider implements PriceProvider {
+  async getPrice(ticker: string, assetType: AssetType): Promise<PriceResult> {
+    if (!["stock", "etf"].includes(assetType)) {
+      throw new Error("StubStockProvider only supports stock and ETF assets.");
+    }
+
+    return {
+      ticker: ticker.toUpperCase(),
+      price: 321,
+      currency: "USD",
+      source: "stub-stock",
+      priceChange1d: 2.5,
+      timestamp: new Date().toISOString(),
+    };
+  }
+}
+
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "invest-watchlist-"));
 const dbPath = path.join(tempDir, "verify.sqlite");
 const db = createDb(dbPath);
@@ -65,6 +82,22 @@ const registeredToolNames =
 assert(
   JSON.stringify(registeredToolNames) === JSON.stringify([...expectedToolNames].sort()),
   `Expected registered MCP tools to match: ${expectedToolNames.join(", ")}`,
+);
+
+const registeredResources = server as unknown as { _registeredResources?: Map<string, unknown> | Record<string, unknown> };
+const resourceRegistry = registeredResources._registeredResources;
+const registeredResourceNames =
+  resourceRegistry instanceof Map ? [...resourceRegistry.keys()].sort() : Object.keys(resourceRegistry ?? {}).sort();
+assert(
+  registeredResourceNames.includes("ui://watchlist/table.html"),
+  "Expected a ChatGPT watchlist UI resource to be registered.",
+);
+
+const listWatchlistTool = toolRegistry instanceof Map ? toolRegistry.get("list_watchlist") : toolRegistry?.list_watchlist;
+const listWatchlistToolMeta = (listWatchlistTool as { _meta?: Record<string, unknown> } | undefined)?._meta;
+assert(
+  listWatchlistToolMeta?.["openai/outputTemplate"] === "ui://watchlist/table.html",
+  "Expected list_watchlist to advertise the ChatGPT output template.",
 );
 
 await tools.addAsset({
@@ -208,11 +241,14 @@ const hybridProvider = createPriceProvider({
   mode: "hybrid",
   mockProvider: new MockPriceProvider(),
   coinGeckoProvider: new StubCoinGeckoProvider(),
+  stockProvider: new StubStockProvider(),
 });
 const hybridBtc = await hybridProvider.getPrice("BTC", "crypto");
 assert(hybridBtc.source === "stub-coingecko", "Expected BTC to use CoinGecko provider in hybrid mode.");
 const hybridMsft = await hybridProvider.getPrice("MSFT", "stock");
-assert(hybridMsft.source === "mock", "Expected stocks to use mock provider in hybrid mode.");
+assert(hybridMsft.source === "stub-stock", "Expected stocks to use stock provider in hybrid mode.");
+const hybridSpy = await hybridProvider.getPrice("SPY", "etf");
+assert(hybridSpy.source === "stub-stock", "Expected ETFs to use stock provider in hybrid mode.");
 
 await db.close();
 console.log("Verification passed.");

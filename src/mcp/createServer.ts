@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { WatchlistTools } from "../tools/watchlistTools.js";
 import type { AddAssetInput, AssetIdentifier, ListWatchlistInput, UpdateAssetFields } from "../types.js";
+import { renderWatchlistHtml } from "../ui/watchlistHtml.js";
 
 export const expectedToolNames = [
   "list_watchlist",
@@ -29,6 +30,8 @@ interface CreateServerOptions {
   priceProviderMode: string;
 }
 
+const WATCHLIST_UI_URI = "ui://watchlist/table.html";
+
 function asMcpResponse(data: Record<string, unknown>) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
@@ -41,6 +44,32 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
     name: "Invest Watchlist",
     version: "0.1.0",
   });
+
+  server.registerResource(
+    "watchlist-ui",
+    WATCHLIST_UI_URI,
+    {
+      title: "Watchlist table",
+      description: "Interactive ChatGPT watchlist table.",
+      mimeType: "text/html",
+      _meta: {
+        "openai/widgetDescription": "Interactive table of the investment watchlist.",
+        "openai/widgetPrefersBorder": true,
+      },
+    },
+    async () => {
+      const view = await tools.listWatchlist({ sortBy: "ticker" });
+      return {
+        contents: [
+          {
+            uri: WATCHLIST_UI_URI,
+            mimeType: "text/html",
+            text: renderWatchlistHtml(view),
+          },
+        ],
+      };
+    },
+  );
 
   server.registerTool(
     "list_watchlist",
@@ -56,6 +85,12 @@ export function createInvestWatchlistMcpServer({ tools, priceProviderMode }: Cre
         sortBy: z.string().optional(),
       },
       annotations: { readOnlyHint: true },
+      _meta: {
+        ui: {
+          resourceUri: WATCHLIST_UI_URI,
+        },
+        "openai/outputTemplate": WATCHLIST_UI_URI,
+      },
     },
     async (input) => asMcpResponse(await tools.listWatchlist(input as ListWatchlistInput)),
   );
