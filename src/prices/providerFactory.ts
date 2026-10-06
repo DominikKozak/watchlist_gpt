@@ -29,7 +29,6 @@ class HybridPriceProvider implements PriceProvider {
   constructor(
     private readonly cryptoProvider: PriceProvider,
     private readonly stockProvider: PriceProvider,
-    private readonly fallbackProvider: PriceProvider,
   ) {}
 
   async getPrice(ticker: string, assetType: AssetType): Promise<PriceResult> {
@@ -38,20 +37,13 @@ class HybridPriceProvider implements PriceProvider {
     }
 
     if (assetType === "stock" || assetType === "etf") {
-      try {
-        return await this.stockProvider.getPrice(ticker, assetType);
-      } catch (error) {
-        if (process.env.STOCK_API_KEY?.trim()) {
-          throw error;
-        }
-      }
+      return this.stockProvider.getPrice(ticker, assetType);
     }
-
-    return this.fallbackProvider.getPrice(ticker, assetType);
+    throw new Error(`No free quote provider for ${assetType} ${ticker}. Option premiums and note-only rows are not underlying stock prices.`);
   }
 }
 
-export function getPriceProviderMode(rawMode = process.env.PRICE_PROVIDER ?? "mock"): PriceProviderMode {
+export function getPriceProviderMode(rawMode = process.env.PRICE_PROVIDER ?? "hybrid"): PriceProviderMode {
   const mode = rawMode.trim().toLowerCase();
   if (mode === "mock" || mode === "coingecko" || mode === "hybrid") {
     return mode;
@@ -72,6 +64,6 @@ export function createPriceProvider(options: ProviderFactoryOptions = {}): Price
     case "coingecko":
       return new CryptoOnlyProvider(coinGeckoProvider);
     case "hybrid":
-      return new HybridPriceProvider(coinGeckoProvider, stockProvider, mockProvider);
+      return new HybridPriceProvider(coinGeckoProvider, stockProvider);
   }
 }

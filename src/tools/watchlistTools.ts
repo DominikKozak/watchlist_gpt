@@ -203,7 +203,7 @@ export class WatchlistTools {
   constructor(
     private readonly db: AppDb,
     private readonly priceProvider: PriceProvider,
-    private readonly priceProviderMode = "mock",
+    private readonly priceProviderMode = "hybrid",
   ) {}
 
   async listWatchlist(input: ListWatchlistInput = {}) {
@@ -230,7 +230,11 @@ export class WatchlistTools {
 
     const sortBy = parsed.sortBy ?? "ticker";
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const rows = await this.db.all<Asset>(`SELECT * FROM assets ${where} ORDER BY ${sortBy} COLLATE NOCASE`, params);
+    const rows = await this.db.all<Asset & { priceSource: string | null }>(
+      `SELECT assets.*, (SELECT source FROM price_history
+         WHERE assetId = assets.id AND timestamp = assets.lastPriceUpdate AND price = assets.currentPrice
+         ORDER BY id DESC LIMIT 1) AS priceSource
+       FROM assets ${where} ORDER BY ${sortBy} COLLATE NOCASE`, params);
     const assets = rows.map((asset) => ({
       id: asset.id,
       ticker: asset.ticker,
@@ -245,6 +249,10 @@ export class WatchlistTools {
       priceChange1d: asset.priceChange1d,
       priceChange7d: asset.priceChange7d,
       priceChange30d: asset.priceChange30d,
+      lastPriceUpdate: asset.lastPriceUpdate,
+      priceSource: asset.priceSource,
+      priceStatus: asset.currentPrice == null ? "missing" : asset.priceSource === "mock" ? "test" :
+        !asset.lastPriceUpdate || Date.now() - Date.parse(asset.lastPriceUpdate) > 4 * 86400000 ? "stale" : "available",
       nextReviewDate: asset.nextReviewDate,
       targetBuyPrice: asset.targetBuyPrice,
       targetSellPrice: asset.targetSellPrice,
@@ -260,9 +268,11 @@ export class WatchlistTools {
       warnings.push("PRICE_PROVIDER=mock returns deterministic test prices, not market data.");
     }
     if (this.priceProviderMode === "coingecko" || this.priceProviderMode === "hybrid") {
-      warnings.push("Crypto prices may be provider-delayed; stock and ETF prices are mock or unavailable unless a stock provider is implemented.");
+      warnings.push("Market quotes may be exchange-delayed. See each price source and market timestamp. 7d/30d changes use the last available close on or before the calendar lookback; they exclude dividends.");
     }
-    if (rows.some((asset) => asset.currentPrice == null)) {
+    if (assets.some((asset) => asset.priceStatus === "test")) warnings.push("Some stored prices are test data; refresh them before making investment decisions.");
+    if (assets.some((asset) => asset.priceStatus === "stale")) warnings.push("Some market prices are older than 4 days or lack a market timestamp.");
+    if (rows.some((asset) => asset.currentPrice == null && ["stock", "etf", "crypto"].includes(asset.assetType))) {
       warnings.push("Some assets do not have a current price yet. Run refresh_prices or review provider coverage.");
     }
 
@@ -300,8 +310,9 @@ export class WatchlistTools {
       [asset.id],
     );
     const warnings: string[] = [];
-    if (priceHistory.some((price) => price.source === "mock")) {
-      warnings.push("Latest stored price history includes mock prices.");
+    const currentSource = priceHistory.find((price) => price.timestamp === asset.lastPriceUpdate && price.price === asset.currentPrice)?.source ?? null;
+    if (currentSource === "mock") {
+      warnings.push("Current stored price is test data, not a market quote.");
     }
     if (!asset.currentPrice || !asset.lastPriceUpdate) {
       warnings.push("This asset has no current price. Run refresh_prices or review provider coverage.");
@@ -313,7 +324,7 @@ export class WatchlistTools {
     }
 
     return {
-      asset,
+      asset: { ...asset, priceSource: currentSource },
       notes,
       priceHistory,
       displaySections: [
@@ -428,9 +439,15 @@ export class WatchlistTools {
     const updated = [];
     const failed = [];
 
-    for (const asset of assets) {
+    // Fetch a small batch concurrently, then write sequentially. No mock fallback.
+    for (let start = 0; start < assets.length; start += 3) {
+      const batch = assets.slice(start, start + 3);
+      const quotes = await Promise.allSettled(batch.map((asset) => this.priceProvider.getPrice(asset.ticker, asset.assetType)));
+      for (const [index, asset] of batch.entries()) {
       try {
-        const price = await this.priceProvider.getPrice(asset.ticker, asset.assetType);
+        const quote = quotes[index];
+        if (quote.status === "rejected") throw quote.reason;
+        const price = quote.value;
         const timestamp = price.timestamp ?? nowIso();
         await this.db.run(
           `UPDATE assets
@@ -455,9 +472,19 @@ export class WatchlistTools {
           price.source,
           timestamp,
         ]);
-        updated.push({ ticker: asset.ticker, price: price.price, currency: price.currency, source: price.source });
+        updated.push({ ticker: asset.ticker, price: price.price, currency: price.currency, source: price.source, timestamp });
       } catch (error) {
+        const currentHistory = await this.db.get<{ source: string }>(
+          "SELECT source FROM price_history WHERE assetId = ? AND timestamp = ? AND price = ? ORDER BY id DESC LIMIT 1",
+          [asset.id, asset.lastPriceUpdate, asset.currentPrice]);
+        if (this.priceProviderMode !== "mock" &&
+            (currentHistory?.source === "mock" || ["option", "cfd", "note_only"].includes(asset.assetType))) {
+          await this.db.run(
+            "UPDATE assets SET currentPrice = NULL, priceChange1d = NULL, priceChange7d = NULL, priceChange30d = NULL, lastPriceUpdate = NULL, updatedAt = ? WHERE id = ?",
+            [nowIso(), asset.id]);
+        }
         failed.push({ ticker: asset.ticker, error: error instanceof Error ? error.message : String(error) });
+      }
       }
     }
 
@@ -483,7 +510,9 @@ export class WatchlistTools {
       `SELECT DISTINCT assets.*
          FROM assets
          JOIN price_history ON price_history.assetId = assets.id
+           AND price_history.timestamp = assets.lastPriceUpdate AND price_history.price = assets.currentPrice
          WHERE price_history.source = 'mock'
+           AND price_history.id = (SELECT MAX(id) FROM price_history ph WHERE ph.assetId = assets.id AND ph.timestamp = assets.lastPriceUpdate AND ph.price = assets.currentPrice)
          ORDER BY assets.ticker COLLATE NOCASE`,
     );
     const warnings: string[] = [];

@@ -61,10 +61,10 @@ DATABASE_PATH=./data/watchlist.sqlite
 DB_PROVIDER=sqlite
 TURSO_DATABASE_URL=
 TURSO_AUTH_TOKEN=
-PRICE_PROVIDER=mock
+PRICE_PROVIDER=hybrid
 COINGECKO_API_KEY=
 STOCK_API_KEY=
-STOCK_API_PROVIDER=finnhub
+STOCK_API_PROVIDER=yahoo
 HTTP_HOST=127.0.0.1
 HTTP_PORT=3000
 CONNECTOR_API_KEY=
@@ -318,7 +318,7 @@ If `reviewNote` is provided, the tool also adds a note prefixed with `Review:`.
 
 ## Price Providers
 
-`PRICE_PROVIDER=mock` uses deterministic fake prices for every asset type. This is the local MVP default.
+`PRICE_PROVIDER=mock` explicitly selects deterministic fake prices for testing. The default is `hybrid`; test quotes are never a fallback for market data.
 
 `PRICE_PROVIDER=coingecko` uses `CoinGeckoProvider` for mapped crypto assets such as BTC. Non-crypto assets return a clear per-ticker failure during refresh.
 
@@ -326,11 +326,13 @@ If `reviewNote` is provided, the tool also adds a note prefixed with `Review:`.
 
 - crypto to CoinGecko
 - stock and ETF assets to `StockProvider`
-- option, CFD, and note-only assets to mock fallback
+- option, CFD, and note-only assets to an unsupported-quote error, with no fabricated premium or row price
 
-`COINGECKO_API_KEY` is optional and used only when present. Prices may be delayed, estimated, missing, or mock-only depending on provider mode.
+`COINGECKO_API_KEY` is optional and used only when present. Market quotes can be exchange-delayed or missing. Source and provider market timestamps are returned with prices.
 
-`StockProvider` now supports `STOCK_API_PROVIDER=finnhub`. When `STOCK_API_KEY` is configured, stock and ETF assets can refresh with live Finnhub quotes. If `STOCK_API_KEY` is missing, hybrid mode falls back to mock prices for stock and ETF assets so local development still works.
+`StockProvider` uses the free public Yahoo daily-chart endpoint with `STOCK_API_PROVIDER=yahoo` (no key or subscription). Native currencies and units are preserved, including EUR, CAD, CZK and British pence (`GBp`). `BRK.B` maps to `BRK-B`. The 1d change compares the prior trading close; 7d and 30d compare the last available close on or before the calendar lookback in the exchange timezone. These are price changes, not dividend total returns. Null daily candles are skipped. The endpoint is best-effort, not a guaranteed real-time feed.
+
+`STOCK_API_PROVIDER=finnhub` remains supported with a key for US symbols. Existing Finnhub configurations without a key use Yahoo; foreign exchange symbols also use Yahoo. A provider error never creates a mock quote. On failed refresh, an old mock snapshot is cleared, while a real prior quote retains its original market timestamp. Quotes older than four days are marked stale. Historic test quotes remain in the audit trail but do not count as the current quote.
 
 Important limitation: live options pricing is still not implemented. Option candidates in the watchlist are still analysis items, not broker-backed live option quotes.
 
@@ -427,7 +429,7 @@ CONNECTOR_API_KEY=long-random-private-token
 HTTP_HOST=0.0.0.0
 HTTP_PORT=3000
 PRICE_PROVIDER=hybrid
-STOCK_API_PROVIDER=finnhub
+STOCK_API_PROVIDER=yahoo
 ```
 
 After deploy, verify:

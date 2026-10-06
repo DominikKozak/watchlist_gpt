@@ -2,6 +2,8 @@ export const allowedCategories = [
   "Long-term holdings",
   "Core ETF",
   "BTC / Crypto",
+  "SaaS apocalypse",
+  "Nuclear / SMR",
   "LEAPS candidates",
   "Options learning",
   "CFD ideas",

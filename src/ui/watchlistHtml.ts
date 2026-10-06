@@ -42,7 +42,10 @@ export function renderWatchlistHtml(view: WatchlistView): string {
           <td><span class="pill">${escapeHtml(asset.category)}</span></td>
           <td><span class="pill status">${escapeHtml(asset.status)}</span></td>
           <td>${escapeHtml(asset.conviction ?? "")}</td>
-          <td class="number">${escapeHtml(formatPrice(asset.currentPrice, asset.currency))}</td>
+          <td class="number">${escapeHtml(formatPrice(asset.currentPrice, asset.currency) || "Cena nedostupná")}
+            <div class="muted">${escapeHtml(asset.priceSource ?? "Bez kotace")} · ${escapeHtml(asset.lastPriceUpdate ?? "")}</div>
+            <div class="muted">${escapeHtml(asset.priceStatus)}</div>
+          </td>
           <td class="number">${escapeHtml(formatPrice(asset.targetBuyPrice, asset.currency))}</td>
           <td class="number">${escapeHtml(formatPrice(asset.targetSellPrice, asset.currency))}</td>
           <td>${escapeHtml(formatDate(asset.nextReviewDate))}</td>
